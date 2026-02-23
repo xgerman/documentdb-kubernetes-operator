@@ -39,7 +39,7 @@ cd documentdb-kubernetes-operator
    Reopen in Container” command from the command palette.
 3. VS Code builds the container defined in
    `.devcontainer/devcontainer.json` using the
-   `mcr.microsoft.com/devcontainers/go:1-1.23-bullseye` base image. The build
+   `mcr.microsoft.com/devcontainers/go:2-1.25-bookworm` base image. The build
    installs the following features:
    - Docker-in-Docker runtime for building and running images
    - kind + kubectl/helm/kubectx/kubens/stern for Kubernetes workflows
