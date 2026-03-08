@@ -5,6 +5,7 @@ package operator
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cloudnative-pg/cnpg-i-machinery/pkg/pluginhelper/common"
 	"github.com/cloudnative-pg/cnpg-i-machinery/pkg/pluginhelper/decoder"
@@ -17,6 +18,9 @@ import (
 )
 
 // MutateCluster is called to mutate a cluster with the defaulting webhook.
+// NOTE: MutateCluster is not fully implemented on the CNPG operator side as of CNPG 1.28.
+// See: https://github.com/documentdb/documentdb-kubernetes-operator/pull/74#issuecomment-3518389125
+// Defaults are applied via ApplyDefaults in the reconciler as a workaround.
 func (Implementation) MutateCluster(
 	ctx context.Context,
 	request *operator.OperatorMutateClusterRequest,
@@ -33,15 +37,19 @@ func (Implementation) MutateCluster(
 		metadata.PluginName,
 	)
 
-	config := config.FromParameters(helper)
+	cfg, valErrs := config.FromParameters(helper)
+	if len(valErrs) > 0 {
+		return nil, fmt.Errorf("invalid plugin configuration: %s", valErrs[0].Message)
+	}
+
 	mutatedCluster := cluster.DeepCopy()
 	if helper.PluginIndex >= 0 {
 		if mutatedCluster.Spec.Plugins[helper.PluginIndex].Parameters == nil {
 			mutatedCluster.Spec.Plugins[helper.PluginIndex].Parameters = make(map[string]string)
 		}
-		config.ApplyDefaults(cluster)
+		cfg.ApplyDefaults(cluster)
 
-		mutatedCluster.Spec.Plugins[helper.PluginIndex].Parameters, err = config.ToParameters()
+		mutatedCluster.Spec.Plugins[helper.PluginIndex].Parameters, err = cfg.ToParameters()
 		if err != nil {
 			return nil, err
 		}

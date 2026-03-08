@@ -2,6 +2,38 @@
 
 This plugin creates a standalone WAL receiver deployment alongside a [CloudNativePG](https://github.com/cloudnative-pg/cloudnative-pg/) cluster. It automatically provisions a Deployment named `<cluster-name>-wal-receiver` that continuously streams Write-Ahead Log (WAL) files from the primary PostgreSQL cluster using `pg_receivewal`, with support for both synchronous and asynchronous replication modes.
 
+## Architecture
+
+The plugin uses the [CNPG-I](https://github.com/cloudnative-pg/cnpg-i) (CloudNativePG Interface) gRPC protocol to extend CloudNativePG without forking the operator.
+
+```
+
+                   Kubernetes Cluster                     │
+                                                          │
+    gRPC/TLS    ┌────────────────────┐  │  ┌──────────
+  │  CloudNativePG│◄─────────────►│  WAL Replica Plugin │  │
+  Operator                  │  (this plugin)      │  ││    
+  └──────┬───────┘               └────────┬───────────┘  │
+         │                                │               │
+         │ manages                        │ creates       │
+         ▼                                ▼               │
+  ┌──────────────┐               ┌────────────────────┐  │
+  │ CNPG Cluster │  WAL stream   │  WAL Receiver      │  │
+  │ (Primary PG) │◄─────────────│  Deployment + PVC  │  │
+  │  pg_receivewal  (└──────────────┘)└──────────
+
+```
+
+### CNPG-I Interfaces Implemented
+
+| Interface | Purpose |
+|-----------|---------|
+| **identity** | Declares plugin metadata and advertised capabilities |
+| **operator** | Validates and mutates Cluster resources via webhooks |
+| **reconciler** | Post-reconcile hook creates/updates the WAL receiver Deployment and PVC |
+
+> **Note:** The `SetStatusInCluster` capability is currently disabled due to an [oscillation bug](https://github.com/documentdb/documentdb-kubernetes-operator/pull/74) where the enabled field alternates on every reconciliation. The `MutateCluster` webhook is registered but not fully implemented upstream in CNPG as of v1.28; defaults are applied in the reconciler as a workaround.
+
 ## Features
 
 - **Automated WAL Streaming**: Continuously receives and stores WAL files from the primary cluster
@@ -9,7 +41,9 @@ This plugin creates a standalone WAL receiver deployment alongside a [CloudNativ
 - **TLS Security**: Uses cluster certificates for secure replication connections
 - **Replication Slot Management**: Automatically creates and manages a dedicated replication slot (`wal_replica`)
 - **Synchronous Replication Support**: Configurable synchronous/asynchronous replication modes
-- **Cluster Lifecycle Management**: Automatically manages resources with proper owner references
+- **Health Probes**: Liveness and readiness probes on the WAL receiver container
+- **Cluster Lifecycle Management**: Proper OwnerReferences ensure resources are cleaned up when the cluster is deleted
+- **Deployment Updates**: Configuration changes are automatically patched onto the existing Deployment
 
 ## Configuration
 
@@ -22,7 +56,7 @@ metadata:
   name: my-cluster
 spec:
   instances: 3
-  
+
   plugins:
   - name: cnpg-i-wal-replica.documentdb.io
     parameters:
@@ -31,9 +65,11 @@ spec:
       synchronous: "active"
       walDirectory: "/var/lib/postgresql/wal"
       walPVCSize: "20Gi"
+      verbose: "true"
+      compression: "0"
 
   replicationSlots:
-    synchronizeReplicas: 
+    synchronizeReplicas:
       enabled: true
 
   storage:
@@ -46,145 +82,61 @@ spec:
 |-----------|------|---------|-------------|
 | `image` | string | Cluster status image | Container image providing `pg_receivewal` binary |
 | `replicationHost` | string | `<cluster>-rw` | Primary host endpoint for WAL streaming |
-| `synchronous` | string | `inactive` | Replication mode: `active` (synchronous) or `inactive` (asynchronous) |
+| `synchronous` | string | `inactive` | Replication mode: `active` or `inactive` |
 | `walDirectory` | string | `/var/lib/postgresql/wal` | Directory path for storing received WAL files |
 | `walPVCSize` | string | `10Gi` | Size of the PersistentVolumeClaim for WAL storage |
+| `verbose` | string | `true` | Enable verbose `pg_receivewal` output (`true` / `false`) |
+| `compression` | string | `0` | Compression level for WAL files (0-9, 0=disabled) |
 
-#### Synchronous Modes
+## Deployment
 
-- **`active`**: Enables synchronous replication with `--synchronous` flag
-- **`inactive`**: Standard asynchronous replication (default)
-
-## Architecture
-
-The plugin creates the following Kubernetes resources:
-
-1. **Deployment**: `<cluster-name>-wal-receiver`
-   - Single replica pod running `pg_receivewal`
-   - Configured with proper security context (user: 105, group: 103)
-   - Automatic restart policy for high availability
-
-2. **PersistentVolumeClaim**: `<cluster-name>-wal-receiver`
-   - Stores received WAL files persistently
-   - Uses `ReadWriteOnce` access mode
-   - Configurable size via `walPVCSize` parameter
-
-3. **Volume Mounts**:
-   - WAL storage: Mounted at configured `walDirectory`
-   - TLS certificates: Mounted from cluster certificate secrets
-   - CA certificates: Mounted for SSL verification
-
-## Security
-
-The plugin implements comprehensive security measures:
-
-- **TLS Encryption**: All replication connections use SSL/TLS
-- **Certificate Management**: Automatically mounts cluster CA and client certificates
-- **User Privileges**: Runs with dedicated PostgreSQL user and group IDs
-- **Connection Authentication**: Uses `streaming_replica` user with certificate-based auth
-
-## Prerequisites
-
-- CloudNativePG operator installed and running
-- CNPG-I (CloudNativePG Interface) framework deployed
-- Cluster with enabled replication slots synchronization
-- Sufficient storage for WAL files retention
-
-## Installation
-
-### Building from Source
+The plugin runs as an independent Deployment and is discovered by CNPG via a Kubernetes Service with the `cnpgi.io/pluginName` label:
 
 ```bash
-# Clone the repository
-git clone https://github.com/documentdb/cnpg-i-wal-replica
-cd cnpg-i-wal-replica
-
-# Build the binary
-go build -o bin/cnpg-i-wal-replica main.go
+# Deploy using kustomize
+kubectl apply -k kubernetes/
 ```
 
-### Using Docker
-
-```bash
-# Build container image
-docker build -t cnpg-i-wal-replica:latest .
-```
-
-### Deployment Scripts
-
-```bash
-# Make scripts executable
-chmod +x scripts/build.sh scripts/run.sh
-
-# Build and run
-./scripts/build.sh
-./scripts/run.sh
-```
-
-## Monitoring and Observability
-
-The WAL receiver pod provides verbose logging when enabled, including:
-
-- Connection status to primary cluster
-- WAL file reception progress
-- Replication slot status
-- SSL/TLS connection details
-
-## Examples
-
-See the `doc/examples/` directory for complete cluster configurations:
-
-- [`cluster-example.yaml`](doc/examples/cluster-example.yaml): Basic configuration
-- [`cluster-example-no-parameters.yaml`](doc/examples/cluster-example-no-parameters.yaml): Default settings
-- [`cluster-example-with-mistake.yaml`](doc/examples/cluster-example-with-mistake.yaml): Common configuration errors
+See the `kubernetes/` directory for the full set of manifests (Deployment, Service, RBAC, TLS certificates).
 
 ## Development
 
-### Project Structure
+### Build
 
-```
-├── cmd/plugin/          # Plugin command-line interface
-├── internal/
-│   ├── config/         # Configuration management
-│   ├── identity/       # Plugin identity and metadata
-│   ├── k8sclient/      # Kubernetes client utilities
-│   ├── operator/       # Operator implementations
-│   └── reconciler/     # Resource reconciliation logic
-├── kubernetes/         # Kubernetes manifests
-├── pkg/metadata/       # Plugin metadata and constants
-└── scripts/           # Build and deployment scripts
+```bash
+go build -o bin/cnpg-i-wal-replica main.go
 ```
 
-### Running Tests
+### Test
 
 ```bash
 go test ./...
 ```
 
+### Project Structure
+
+```
+ cmd/plugin/          # Plugin command-line interface
+ internal/
+ config/         # Configuration management and validation   ├
+   ├── identity/       # Plugin identity and capabilities
+   ├── k8sclient/      # Kubernetes client utilities
+   ├── operator/       # Operator hooks (validate, mutate, status)
+   └── reconciler/     # Reconciliation logic (Deployment + PVC management)
+ kubernetes/         # Kubernetes manifests
+ pkg/metadata/       # Plugin metadata constants
+ scripts/           # Build and deployment scripts
+```
+
 See [`doc/development.md`](doc/development.md) for detailed development guidelines.
 
-## Limitations and Future Enhancements
+## Limitations and Known Issues
 
-### Current Limitations
-
-- Fixed compression level (disabled: `--compress 0`)
+- `MutateCluster` is not fully implemented upstream in CNPG v1.28; defaults are applied in the reconciler
+- `SetStatusInCluster` is disabled due to status oscillation bug
+- Fixed replication slot name (`wal_replica`)
 - No built-in WAL retention/cleanup policies
-- Limited resource configuration options
-
-### Planned Enhancements
-
-- [ ] Configurable resource requests and limits
-- [ ] WAL retention and garbage collection policies  
-- [ ] Health checks and readiness probes
-- [ ] Metrics exposure for monitoring integration
-- [ ] Multi-zone/region WAL archiving support
-- [ ] Backup integration with existing CNPG backup strategies
 
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](../../CONTRIBUTING.md) for guidelines on how to contribute to this project.
-

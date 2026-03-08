@@ -9,12 +9,12 @@ import (
 	"github.com/cloudnative-pg/cnpg-i/pkg/operator"
 )
 
-// Implementation is the implementation of the identity service
+// Implementation is the implementation of the operator service
 type Implementation struct {
 	operator.OperatorServer
 }
 
-// GetCapabilities gets the capabilities of this operator lifecycle hook
+// GetCapabilities gets the capabilities of this operator hook
 func (Implementation) GetCapabilities(
 	context.Context,
 	*operator.OperatorCapabilitiesRequest,
@@ -35,18 +35,15 @@ func (Implementation) GetCapabilities(
 					},
 				},
 			},
-			/* TODO re-add if we need status or can figure out the oscillation bug
+			// TYPE_SET_STATUS_IN_CLUSTER is disabled due to an oscillation bug
+			// where the enabled field alternates on every reconciliation cycle.
+			// Re-enable once the root cause is identified and fixed upstream.
 			{
 				Type: &operator.OperatorCapability_Rpc{
 					Rpc: &operator.OperatorCapability_RPC{
-						Type: operator.OperatorCapability_RPC_TYPE_SET_STATUS_IN_CLUSTER,
-					},
-				},
-			},
-			*/
-			{
-				Type: &operator.OperatorCapability_Rpc{
-					Rpc: &operator.OperatorCapability_RPC{
+						// NOTE: MutateCluster is not fully implemented on the CNPG operator
+						// side as of v1.28. Defaults are applied via ApplyDefaults in the
+						// reconciler as a workaround.
 						Type: operator.OperatorCapability_RPC_TYPE_MUTATE_CLUSTER,
 					},
 				},

@@ -18,10 +18,15 @@ import (
 	"github.com/documentdb/cnpg-i-wal-replica/pkg/metadata"
 )
 
+// Status represents the plugin status reported in the CNPG Cluster status.
 type Status struct {
 	Enabled bool `json:"enabled"`
 }
 
+// SetStatusInCluster reports plugin status in the Cluster resource.
+// NOTE: This capability is currently disabled in GetCapabilities (impl.go) due to a
+// known oscillation bug where the `enabled` field alternates on every reconciliation.
+// See: https://github.com/documentdb/documentdb-kubernetes-operator/pull/74
 func (Implementation) SetStatusInCluster(
 	ctx context.Context,
 	req *operator.SetStatusInClusterRequest,
