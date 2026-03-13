@@ -915,18 +915,18 @@ func (r *DocumentDBReconciler) upgradeDocumentDBIfNeeded(ctx context.Context, cu
 			"parameterOpsCount", len(paramOps))
 	}
 
-	// Step 2b: Images already match — update status fields if stale
+	// Step 4: Images already match — update status fields if stale
 	if err := r.updateImageStatus(ctx, documentdb, currentCluster); err != nil {
 		logger.Error(err, "Failed to update image status")
 	}
 
-	// Step 3: Check if primary pod is healthy before running ALTER EXTENSION
+	// Step 5: Check if primary pod is healthy before running ALTER EXTENSION
 	if !slices.Contains(currentCluster.Status.InstancesStatus[cnpgv1.PodHealthy], currentCluster.Status.CurrentPrimary) {
 		logger.Info("Current primary pod is not healthy; skipping DocumentDB extension upgrade")
 		return nil
 	}
 
-	// Step 4: Check if ALTER EXTENSION UPDATE is needed
+	// Step 6: Check if ALTER EXTENSION UPDATE is needed
 	checkVersionSQL := "SELECT default_version, installed_version FROM pg_available_extensions WHERE name = 'documentdb'"
 	output, err := r.SQLExecutor(ctx, currentCluster, checkVersionSQL)
 	if err != nil {
@@ -944,7 +944,7 @@ func (r *DocumentDBReconciler) upgradeDocumentDBIfNeeded(ctx context.Context, cu
 		return nil
 	}
 
-	// Step 5: Update DocumentDB schema version in status (even if no upgrade needed)
+	// Step 7: Update DocumentDB schema version in status (even if no upgrade needed)
 	// Convert from pg_available_extensions format ("0.110-0") to semver ("0.110.0")
 	installedSemver := util.ExtensionVersionToSemver(installedVersion)
 	if documentdb.Status.SchemaVersion != installedSemver {
@@ -965,7 +965,7 @@ func (r *DocumentDBReconciler) upgradeDocumentDBIfNeeded(ctx context.Context, cu
 		return nil
 	}
 
-	// Step 5b: Rollback detection — check if the new binary is older than the installed schema
+	// Step 7b: Rollback detection — check if the new binary is older than the installed schema
 	cmp, err := util.CompareExtensionVersions(defaultVersion, installedVersion)
 	if err != nil {
 		logger.Error(err, "Failed to compare extension versions, skipping ALTER EXTENSION as a safety measure",
@@ -990,7 +990,7 @@ func (r *DocumentDBReconciler) upgradeDocumentDBIfNeeded(ctx context.Context, cu
 		return nil
 	}
 
-	// Step 6: Run ALTER EXTENSION to upgrade (cmp > 0: defaultVersion > installedVersion)
+	// Step 8: Run ALTER EXTENSION to upgrade (cmp > 0: defaultVersion > installedVersion)
 	logger.Info("Upgrading DocumentDB extension",
 		"fromVersion", installedVersion,
 		"toVersion", defaultVersion)
@@ -1004,7 +1004,7 @@ func (r *DocumentDBReconciler) upgradeDocumentDBIfNeeded(ctx context.Context, cu
 		"fromVersion", installedVersion,
 		"toVersion", defaultVersion)
 
-	// Step 7: Update DocumentDB schema version in status after upgrade
+	// Step 9: Update DocumentDB schema version in status after upgrade
 	// Re-fetch to get latest resourceVersion before status update
 	if err := r.Get(ctx, types.NamespacedName{Name: documentdb.Name, Namespace: documentdb.Namespace}, documentdb); err != nil {
 		return fmt.Errorf("failed to refetch DocumentDB after schema upgrade: %w", err)
@@ -1105,7 +1105,7 @@ func buildParameterAndResourcePatchOps(currentCluster, desiredCluster *cnpgv1.Cl
 	// Check if PostgreSQL parameters changed
 	if !reflect.DeepEqual(currentCluster.Spec.PostgresConfiguration.Parameters, desiredCluster.Spec.PostgresConfiguration.Parameters) {
 		ops = append(ops, util.JSONPatch{
-			Op:    "replace",
+			Op:    "add",
 			Path:  "/spec/postgresql/parameters",
 			Value: desiredCluster.Spec.PostgresConfiguration.Parameters,
 		})
@@ -1114,7 +1114,7 @@ func buildParameterAndResourcePatchOps(currentCluster, desiredCluster *cnpgv1.Cl
 	// Check if resource requirements changed
 	if !reflect.DeepEqual(currentCluster.Spec.Resources, desiredCluster.Spec.Resources) {
 		ops = append(ops, util.JSONPatch{
-			Op:    "replace",
+			Op:    "add",
 			Path:  "/spec/resources",
 			Value: desiredCluster.Spec.Resources,
 		})

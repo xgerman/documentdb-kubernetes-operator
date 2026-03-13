@@ -222,10 +222,18 @@ func buildResourceRequirements(documentdb *dbpreview.DocumentDB) corev1.Resource
 
 	limits := corev1.ResourceList{}
 	if mem != "" && mem != "0" {
-		limits[corev1.ResourceMemory] = resource.MustParse(mem)
+		if quantity, err := resource.ParseQuantity(mem); err == nil {
+			limits[corev1.ResourceMemory] = quantity
+		}
 	}
 	if cpu != "" && cpu != "0" {
-		limits[corev1.ResourceCPU] = resource.MustParse(cpu)
+		if quantity, err := resource.ParseQuantity(cpu); err == nil {
+			limits[corev1.ResourceCPU] = quantity
+		}
+	}
+
+	if len(limits) == 0 {
+		return reqs
 	}
 
 	// Guaranteed QoS: requests == limits

@@ -1084,8 +1084,8 @@ spec:
                     x-kubernetes-validations:
                     - message: cannot specify both backup and persistentVolume recovery
                         at the same time
-                      rule: '!(has(self.backup) && self.backup.name != ” && has(self.persistentVolume)
-                        && self.persistentVolume.name != ”)'
+                      rule: '!(has(self.backup) && self.backup.name != '''' && has(self.persistentVolume)
+                        && self.persistentVolume.name != '''')'
                 type: object
               clusterReplication:
                 description: ClusterReplication configures cross-cluster replication
