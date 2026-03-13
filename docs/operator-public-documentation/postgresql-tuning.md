@@ -42,7 +42,7 @@ When a memory limit is configured, these parameters are automatically computed:
 |-----------|---------|---------------|
 | `shared_buffers` | 25% of memory | 2GB |
 | `effective_cache_size` | 75% of memory | 6GB |
-| `work_mem` | memory / (max_connections × 4) | 7MB |
+| `work_mem` | memory / (max_connections × 4) | 6MB |
 | `maintenance_work_mem` | min(2GB, 10% of memory) | 819MB |
 
 ### Sizing Reference
@@ -52,7 +52,7 @@ When a memory limit is configured, these parameters are automatically computed:
 | (not set) | 256MB | 512MB | 16MB | 128MB |
 | 2Gi | 512MB | 1536MB | 4MB | 204MB |
 | 4Gi | 1GB | 3GB | 4MB | 409MB |
-| 8Gi | 2GB | 6GB | 7MB | 819MB |
+| 8Gi | 2GB | 6GB | 6MB | 819MB |
 | 16Gi | 4GB | 12GB | 13MB | 1638MB |
 | 32Gi | 8GB | 24GB | 27MB | 2GB |
 
