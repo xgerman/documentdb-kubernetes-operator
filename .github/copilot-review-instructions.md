@@ -52,7 +52,9 @@ When a PR documents cloud-specific settings (annotations, storage classes, ident
 
 ## Go code reviews
 
-When a PR changes Go source files, check:
+For the full code review checklist — including Kubernetes operator patterns, security, performance, and testing standards — see [`.github/agents/code-review-agent.md`](agents/code-review-agent.md).
+
+When a PR changes Go source files, pay special attention to:
 
 - Error handling: no ignored errors, errors wrapped with context (`fmt.Errorf("context: %w", err)`).
 - Reconciliation logic is idempotent.
