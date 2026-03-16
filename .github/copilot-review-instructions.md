@@ -7,6 +7,28 @@ These instructions guide GitHub Copilot's automated pull request reviews for the
 - Use the severity levels defined in `.github/copilot-instructions.md`: 🔴 Critical, 🟠 Major, 🟡 Minor, 🟢 Nitpick.
 - Focus on correctness, security, and maintainability. Don't flag purely stylistic preferences.
 
+## Code reviews
+
+For the full code review checklist — including Kubernetes operator patterns, security, performance, and testing standards — see [`.github/agents/code-review-agent.md`](agents/code-review-agent.md).
+
+### Go Code reviews
+When a PR changes Go source files, pay special attention to:
+
+- Error handling: no ignored errors, errors wrapped with context (`fmt.Errorf("context: %w", err)`).
+- Reconciliation logic is idempotent.
+- Exported types and functions have Go doc comments.
+- No hardcoded secrets or credentials.
+- Unit tests cover new functionality. The repository requires 90% patch coverage.
+- `resource.MustParse` should not be used with user input — prefer `resource.ParseQuantity` with error handling.
+
+### Helm chart reviews
+
+When a PR changes files under `operator/documentdb-helm-chart/`:
+
+- CRD YAML files under `crds/` are generated — verify they match the source in `operator/src/config/crd/bases/`.
+- Check that `values.yaml` changes have corresponding documentation updates.
+- Verify CEL validation rules in CRDs use straight quotes (`''`), not Unicode smart quotes.
+
 ## Documentation reviews
 
 When a PR changes files matching any of these paths, apply the documentation rules from `.github/agents/documentation-agent.md`:
@@ -50,23 +72,3 @@ When a PR documents cloud-specific settings (annotations, storage classes, ident
 - Playground READMEs should focus on script usage; public docs should cover concepts and troubleshooting.
 - Flag duplicated explanatory content between playground READMEs and public documentation pages.
 
-## Go code reviews
-
-For the full code review checklist — including Kubernetes operator patterns, security, performance, and testing standards — see [`.github/agents/code-review-agent.md`](agents/code-review-agent.md).
-
-When a PR changes Go source files, pay special attention to:
-
-- Error handling: no ignored errors, errors wrapped with context (`fmt.Errorf("context: %w", err)`).
-- Reconciliation logic is idempotent.
-- Exported types and functions have Go doc comments.
-- No hardcoded secrets or credentials.
-- Unit tests cover new functionality. The repository requires 90% patch coverage.
-- `resource.MustParse` should not be used with user input — prefer `resource.ParseQuantity` with error handling.
-
-## Helm chart reviews
-
-When a PR changes files under `operator/documentdb-helm-chart/`:
-
-- CRD YAML files under `crds/` are generated — verify they match the source in `operator/src/config/crd/bases/`.
-- Check that `values.yaml` changes have corresponding documentation updates.
-- Verify CEL validation rules in CRDs use straight quotes (`''`), not Unicode smart quotes.
