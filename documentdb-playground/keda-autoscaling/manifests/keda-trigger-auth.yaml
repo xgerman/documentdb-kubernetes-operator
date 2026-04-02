@@ -8,5 +8,4 @@ spec:
   secretTargetRef:
     - parameter: connectionString
       name: documentdb-keda-connection
-      namespace: keda
       key: connectionString

@@ -144,11 +144,26 @@ create_keda_connection_secret() {
         exit 1
     fi
 
-    conn_string=$(eval echo "$raw_conn")
+    conn_string=$(eval "echo \"$raw_conn\"")
 
     # KEDA's Go MongoDB driver requires tlsInsecure=true (not tlsAllowInvalidCertificates)
     # for skipping both certificate AND hostname verification with self-signed certs.
     conn_string=$(echo "$conn_string" | sed 's/tlsAllowInvalidCertificates=true/tlsInsecure=true/g')
+
+    # Remove replicaSet parameter — KEDA's Go driver fails topology negotiation
+    # with DocumentDB's synthetic replica set when replicaSet is specified alongside
+    # directConnection=true.
+    conn_string=$(echo "$conn_string" | sed 's/[&?]replicaSet=rs0//g')
+
+    # Replace ClusterIP with DNS name for cross-namespace resolution.
+    # The status.connectionString uses a ClusterIP that may not resolve from
+    # other namespaces. The DNS name is stable and always works.
+    local svc_name="documentdb-service-${DOCUMENTDB_NAME}.${DOCUMENTDB_NAMESPACE}.svc.cluster.local"
+    local svc_ip
+    svc_ip=$(kubectl get svc "documentdb-service-${DOCUMENTDB_NAME}" -n "$DOCUMENTDB_NAMESPACE"         -o jsonpath='{.spec.clusterIP}' 2>/dev/null) || true
+    if [ -n "$svc_ip" ]; then
+        conn_string=$(echo "$conn_string" | sed "s/$svc_ip/$svc_name/g")
+    fi
 
     # Create in keda namespace (for ClusterTriggerAuthentication)
     kubectl create secret generic documentdb-keda-connection \

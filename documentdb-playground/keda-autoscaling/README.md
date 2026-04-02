@@ -128,6 +128,10 @@ Interactive walkthrough that seeds jobs, watches scaling, drains jobs, and watch
 > attempts replica set discovery, which fails with DocumentDB because it doesn't expose a standard
 > MongoDB replica set topology.
 
+> **Note:** Remove the `replicaSet=rs0` parameter from the connection string. KEDA's Go driver
+> fails topology negotiation with DocumentDB when `replicaSet` is specified alongside
+> `directConnection=true`. The setup script strips this parameter automatically.
+
 > **Note:** A `ClusterTriggerAuthentication` is used because the DocumentDB credentials Secret
 > (`documentdb-ns`) and the ScaledObject (`app`) are in different namespaces. If you deploy
 > everything in the same namespace, you can use a namespace-scoped `TriggerAuthentication` instead.
