@@ -102,3 +102,21 @@ Follow conventional commits format:
 - `test:` for test additions/changes
 - `refactor:` for code refactoring
 - `chore:` for maintenance tasks
+
+### DCO Sign-off (Required)
+
+Every commit **must** carry a `Signed-off-by:` trailer — the repo enforces the
+[Developer Certificate of Origin](../contribute/developer-certificate-of-origin)
+via a DCO check on PRs, and unsigned commits block the merge.
+
+- Use `git commit -s` (or `git commit --signoff`) for new commits.
+- To retrofit sign-offs onto commits you already made on the current branch:
+  ```bash
+  GIT_SEQUENCE_EDITOR=: git rebase -i \
+    --exec 'git commit --amend --no-edit --signoff' <upstream>
+  ```
+  (Plain `git rebase --signoff` is a no-op when commits don't need to be replayed.)
+- Verify before pushing: `git log -n <N> --format='%(trailers:key=Signed-off-by)'`
+  must print a trailer for every commit.
+- The sign-off is in addition to the `Co-authored-by: Copilot …` trailer, not a
+  replacement for it.
