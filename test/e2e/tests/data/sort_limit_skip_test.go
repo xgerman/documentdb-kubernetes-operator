@@ -31,11 +31,11 @@ var _ = Describe("DocumentDB data — sort/limit/skip",
 			handle, dbName = connectSharedRO(ctx)
 			coll = handle.Database(dbName).Collection("sort_cursor")
 			docs := seed.SortDataset()
-			any := make([]any, len(docs))
+			docsAny := make([]any, len(docs))
 			for i := range docs {
-				any[i] = docs[i]
+				docsAny[i] = docs[i]
 			}
-			_, err := coll.InsertMany(ctx, any)
+			_, err := coll.InsertMany(ctx, docsAny)
 			Expect(err).NotTo(HaveOccurred())
 		})
 		AfterAll(func() {

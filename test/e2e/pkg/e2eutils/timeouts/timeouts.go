@@ -18,7 +18,8 @@ import (
 type Op string
 
 // DocumentDB-specific operations. When adding an entry here, also
-// extend the switch in For and PollInterval.
+// extend documentDBDefaults/cnpgAlias (and PollInterval if the new op
+// needs a non-default poll cadence).
 const (
 	// DocumentDBReady waits for a fresh DocumentDB cluster to reach the
 	// running state after creation.

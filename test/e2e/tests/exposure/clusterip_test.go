@@ -11,7 +11,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/documentdb/documentdb-operator/test/e2e"
 	"github.com/documentdb/documentdb-operator/test/e2e/pkg/e2eutils/assertions"
@@ -95,7 +94,5 @@ var _ = Describe("DocumentDB exposure — ClusterIP",
 				return pingErr
 			}, timeouts.For(timeouts.MongoConnect), timeouts.PollInterval(timeouts.MongoConnect)).
 				Should(Succeed(), "mongo ping through ClusterIP port-forward: %v", pingErr)
-
-			_ = client.ObjectKeyFromObject(dd)
 		})
 	})
