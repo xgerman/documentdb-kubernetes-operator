@@ -138,6 +138,33 @@ type DocumentDBSpec struct {
 	// Monitoring configures observability via an OTel Collector sidecar.
 	// +optional
 	Monitoring *MonitoringSpec `json:"monitoring,omitempty"`
+
+	// PostgresUID is the UID under which CloudNative-PG launches PostgreSQL inside
+	// the postgresImage container. Default behaviour (unset) uses the CNPG default
+	// for the chosen image. Set this when using a combined image whose postgres
+	// user has a non-default UID. Must be set together with PostgresGID.
+	// +optional
+	PostgresUID *int32 `json:"postgresUID,omitempty"`
+
+	// PostgresGID is the GID under which CloudNative-PG launches PostgreSQL.
+	// See PostgresUID. Must be set together with PostgresUID.
+	// +optional
+	PostgresGID *int32 `json:"postgresGID,omitempty"`
+
+	// PreloadLibraries overrides the default shared_preload_libraries injected
+	// by the operator. When set, replaces the default
+	// ["pg_cron", "pg_documentdb_core", "pg_documentdb"] list. Useful for
+	// combined-image deployments where extensions are pre-baked and
+	// shared_preload_libraries is configured by the image itself.
+	// +optional
+	PreloadLibraries []string `json:"preloadLibraries,omitempty"`
+
+	// PostInitSQL overrides the default post-init SQL block run by CNPG
+	// (which by default does CREATE EXTENSION documentdb CASCADE plus role
+	// setup). When set, replaces the default block entirely. Useful for
+	// combined-image deployments that ship a different extension set.
+	// +optional
+	PostInitSQL []string `json:"postInitSQL,omitempty"`
 }
 
 // BootstrapConfiguration defines how to bootstrap a DocumentDB cluster.
@@ -148,7 +175,7 @@ type BootstrapConfiguration struct {
 }
 
 // RecoveryConfiguration defines recovery settings for bootstrapping a DocumentDB cluster.
-// +kubebuilder:validation:XValidation:rule="!(has(self.backup) && self.backup.name != '' && has(self.persistentVolume) && self.persistentVolume.name != '')",message="cannot specify both backup and persistentVolume recovery at the same time"
+// +kubebuilder:validation:XValidation:rule="!(has(self.backup) && self.backup.name != ” && has(self.persistentVolume) && self.persistentVolume.name != ”)",message="cannot specify both backup and persistentVolume recovery at the same time"
 type RecoveryConfiguration struct {
 	// Backup specifies the source backup to restore from.
 	// +optional
