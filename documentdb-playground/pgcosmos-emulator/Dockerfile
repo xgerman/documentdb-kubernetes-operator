@@ -39,4 +39,13 @@ RUN set -eux; \
     done; \
     "${target}/postgres" --version
 
+# Adapter entrypoint that translates the documentdb-operator sidecar args
+# (--start-pg, --pg-port, --create-user, --cert-path, --key-file) into a
+# rust_gateway SetupConfiguration JSON and execs the gateway. Only used by
+# the gateway sidecar container — the postgres container's command is set
+# explicitly by CloudNative-PG and bypasses ENTRYPOINT.
+COPY documentdb-gateway-entry.sh /usr/local/bin/documentdb-gateway-entry.sh
+RUN chmod 0755 /usr/local/bin/documentdb-gateway-entry.sh
+
 USER cosmosdev
+ENTRYPOINT ["/usr/local/bin/documentdb-gateway-entry.sh"]

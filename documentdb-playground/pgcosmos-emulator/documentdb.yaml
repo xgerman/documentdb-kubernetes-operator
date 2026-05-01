@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pgcosmos-emulator
+
+---
+# Application credentials. The default postInitSQL provisioned by the operator
+# (and the override below) creates a `documentdb` PostgreSQL role with password
+# `Admin100`. The gateway sidecar reads username/password from this secret to
+# authenticate against the in-pod Postgres. Keep these values in sync with
+# whatever CREATE/ALTER ROLE statements appear in spec.postInitSQL.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: documentdb-credentials
+  namespace: pgcosmos-emulator
+type: Opaque
+stringData:
+  username: documentdb
+  password: Admin100
+
+---
+# Combined-image-mode DocumentDB. spec.documentDBImage is intentionally empty,
+# which signals the operator to:
+#   * skip the ImageVolume extension mount (extensions live in postgresImage),
+#   * skip the operator's default shared_preload_libraries / GUC parameters and
+#     instead honour spec.preloadLibraries verbatim,
+#   * propagate spec.postgresUID / postgresGID to the CNPG ClusterSpec so the
+#     in-image cosmosdev (uid 1000, gid 1000) account owns PGDATA,
+#   * use spec.postInitSQL verbatim for bootstrap (no implicit
+#     `CREATE EXTENSION documentdb CASCADE`).
+apiVersion: documentdb.io/preview
+kind: DocumentDB
+metadata:
+  name: pgcosmos-emulator
+  namespace: pgcosmos-emulator
+spec:
+  # CNPG's admission webhook validates that the postgres image tag looks like a
+  # Postgres version (debian-style "16.12-…" or "16"). The wrapper image wraps
+  # PostgreSQL 16.12, so we retag it as :16.12 in build.sh / CI.
+  postgresImage: localhost/pgcosmos-emulator:16.12
+  gatewayImage:  localhost/pgcosmos-emulator:dev
+  postgresUID: 1000
+  postgresGID: 1000
+  preloadLibraries:
+    - citus
+    - rum
+    - helio_gin
+    - pg_cron
+    - pgcosmos
+  postInitSQL:
+    - "CREATE EXTENSION IF NOT EXISTS citus"
+    - "CREATE EXTENSION IF NOT EXISTS pg_cron"
+    - "CREATE EXTENSION IF NOT EXISTS rum"
+    - "CREATE EXTENSION IF NOT EXISTS helio_gin"
+    - "CREATE EXTENSION IF NOT EXISTS postgis"
+    - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
+    - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
+    - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"
+  nodeCount: 1
+  instancesPerNode: 1
+  resource:
+    storage:
+      pvcSize: 10Gi
+  exposeViaService:
+    serviceType: ClusterIP
+  tls:
+    gateway:
+      mode: Disabled
