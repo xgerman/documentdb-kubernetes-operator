@@ -160,18 +160,34 @@ var _ = Describe("getBootstrapConfiguration", func() {
 
 var _ = Describe("getDefaultBootstrapConfiguration", func() {
 	It("returns a bootstrap configuration with InitDB", func() {
-		result := getDefaultBootstrapConfiguration()
+		result := getDefaultBootstrapConfiguration(nil)
 		Expect(result).ToNot(BeNil())
 		Expect(result.InitDB).ToNot(BeNil())
 		Expect(result.Recovery).To(BeNil())
 	})
 
 	It("includes required PostInitSQL statements", func() {
-		result := getDefaultBootstrapConfiguration()
+		result := getDefaultBootstrapConfiguration(nil)
 		Expect(result.InitDB.PostInitSQL).To(HaveLen(3))
 		Expect(result.InitDB.PostInitSQL).To(ContainElement("CREATE EXTENSION documentdb CASCADE"))
 		Expect(result.InitDB.PostInitSQL).To(ContainElement("CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"))
 		Expect(result.InitDB.PostInitSQL).To(ContainElement("ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"))
+	})
+
+	It("honours spec.postInitSQL override when set", func() {
+		documentdb := &dbpreview.DocumentDB{
+			Spec: dbpreview.DocumentDBSpec{
+				PostInitSQL: []string{
+					"CREATE EXTENSION pgcosmos CASCADE",
+					"GRANT ALL ON SCHEMA public TO postgres",
+				},
+			},
+		}
+		result := getDefaultBootstrapConfiguration(documentdb)
+		Expect(result.InitDB.PostInitSQL).To(Equal([]string{
+			"CREATE EXTENSION pgcosmos CASCADE",
+			"GRANT ALL ON SCHEMA public TO postgres",
+		}))
 	})
 })
 
@@ -187,6 +203,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 3,
 				PostgresImage:    "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
+				DocumentDBImage:  "documentdb-oss:1.0",
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{
 						PvcSize: "10Gi",
@@ -402,6 +419,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
+				DocumentDBImage:  "ext:1.0",
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 				},
@@ -421,6 +439,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
+				DocumentDBImage:  "ext:1.0",
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 				},
@@ -440,6 +459,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
+					DocumentDBImage:  "test-image:latest",
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -461,6 +481,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
+					DocumentDBImage:  "test-image:latest",
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -486,6 +507,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
+					DocumentDBImage:  "test-image:latest",
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -511,6 +533,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
+				DocumentDBImage:  "test-image:latest",
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{
 						PvcSize: "10Gi",
@@ -617,6 +640,148 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		Expect(pluginParams).NotTo(HaveKey("monitoringEnabled"))
 		Expect(pluginParams).NotTo(HaveKey("otelCollectorImage"))
 		Expect(pluginParams).NotTo(HaveKey("otelConfigMapName"))
+	})
+	Context("combined-image mode", func() {
+		// Combined-image mode is signalled by leaving spec.documentDBImage empty.
+		// In that path the operator skips the ImageVolume Extensions block, the
+		// documentdb-extension-specific GUC parameters, and the documentdb default
+		// AdditionalLibraries — the image's own postgres conf is authoritative.
+
+		newCombinedDocumentDB := func() *dbpreview.DocumentDB {
+			return &dbpreview.DocumentDB{
+				Spec: dbpreview.DocumentDBSpec{
+					InstancesPerNode: 1,
+					PostgresImage:    "mcr.microsoft.com/example/combined:vnext-preview",
+					// DocumentDBImage intentionally left empty -> combined mode
+					Resource: dbpreview.Resource{
+						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
+					},
+				},
+			}
+		}
+
+		newReq := func() ctrl.Request {
+			r := ctrl.Request{}
+			r.Name = "combined"
+			r.Namespace = "default"
+			return r
+		}
+
+		It("skips Extensions, documentdb-default AdditionalLibraries and Parameters", func() {
+			documentdb := newCombinedDocumentDB()
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.ImageName).To(Equal("mcr.microsoft.com/example/combined:vnext-preview"))
+			Expect(cluster.Spec.PostgresConfiguration.Extensions).To(BeEmpty())
+			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(BeNil())
+			Expect(cluster.Spec.PostgresConfiguration.Parameters).To(BeNil())
+			Expect(cluster.Spec.PostgresConfiguration.PgHBA).To(HaveLen(3))
+		})
+
+		It("preserves the gateway plugin block in combined-image mode", func() {
+			documentdb := newCombinedDocumentDB()
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.Plugins).To(HaveLen(1))
+			Expect(cluster.Spec.Plugins[0].Parameters).To(HaveKey("gatewayImage"))
+		})
+
+		It("uses default PostInitSQL when no override is provided", func() {
+			documentdb := newCombinedDocumentDB()
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.Bootstrap.InitDB).ToNot(BeNil())
+			Expect(cluster.Spec.Bootstrap.InitDB.PostInitSQL).To(ContainElement("CREATE EXTENSION documentdb CASCADE"))
+		})
+
+		It("uses spec.postInitSQL verbatim when provided", func() {
+			documentdb := newCombinedDocumentDB()
+			documentdb.Spec.PostInitSQL = []string{
+				"CREATE EXTENSION pgcosmos CASCADE",
+				"CREATE ROLE app LOGIN PASSWORD 'x'",
+			}
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.Bootstrap.InitDB.PostInitSQL).To(Equal([]string{
+				"CREATE EXTENSION pgcosmos CASCADE",
+				"CREATE ROLE app LOGIN PASSWORD 'x'",
+			}))
+		})
+
+		It("propagates spec.preloadLibraries to AdditionalLibraries", func() {
+			documentdb := newCombinedDocumentDB()
+			documentdb.Spec.PreloadLibraries = []string{"pgcosmos", "pg_cron"}
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(Equal([]string{"pgcosmos", "pg_cron"}))
+		})
+
+		It("propagates spec.postgresUID and spec.postgresGID", func() {
+			documentdb := newCombinedDocumentDB()
+			uid := int32(1000)
+			gid := int32(1000)
+			documentdb.Spec.PostgresUID = &uid
+			documentdb.Spec.PostgresGID = &gid
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.PostgresUID).To(Equal(int64(1000)))
+			Expect(cluster.Spec.PostgresGID).To(Equal(int64(1000)))
+		})
+
+		It("leaves PostgresUID/GID at the CNPG default when unset", func() {
+			documentdb := newCombinedDocumentDB()
+			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.PostgresUID).To(Equal(int64(0)))
+			Expect(cluster.Spec.PostgresGID).To(Equal(int64(0)))
+		})
+	})
+
+	Context("default ImageVolume mode preserves prior behaviour", func() {
+		// When spec.documentDBImage is set (existing CRs), output must match the
+		// pre-combined-image-mode shape exactly.
+
+		It("keeps Extensions, default AdditionalLibraries and Parameters", func() {
+			req := ctrl.Request{}
+			req.Name = "default-mode"
+			req.Namespace = "default"
+			documentdb := &dbpreview.DocumentDB{
+				Spec: dbpreview.DocumentDBSpec{
+					InstancesPerNode: 1,
+					DocumentDBImage:  "documentdb-oss:1.0",
+					PostgresImage:    "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
+					Resource: dbpreview.Resource{
+						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
+					},
+				},
+			}
+			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.PostgresConfiguration.Extensions).To(HaveLen(1))
+			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(ConsistOf("pg_cron", "pg_documentdb_core", "pg_documentdb"))
+			Expect(cluster.Spec.PostgresConfiguration.Parameters).To(HaveKeyWithValue("cron.database_name", "postgres"))
+			Expect(cluster.Spec.Bootstrap.InitDB.PostInitSQL).To(ContainElement("CREATE EXTENSION documentdb CASCADE"))
+			Expect(cluster.Spec.PostgresUID).To(Equal(int64(0)))
+			Expect(cluster.Spec.PostgresGID).To(Equal(int64(0)))
+		})
+
+		It("honours spec.preloadLibraries override even in default mode", func() {
+			req := ctrl.Request{}
+			req.Name = "default-mode"
+			req.Namespace = "default"
+			documentdb := &dbpreview.DocumentDB{
+				Spec: dbpreview.DocumentDBSpec{
+					InstancesPerNode: 1,
+					DocumentDBImage:  "documentdb-oss:1.0",
+					PreloadLibraries: []string{"pg_documentdb"},
+					Resource: dbpreview.Resource{
+						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
+					},
+				},
+			}
+			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
+			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(Equal([]string{"pg_documentdb"}))
+		})
 	})
 })
 

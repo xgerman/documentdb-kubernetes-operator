@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"fmt"
 	"os"
+	"strings"
 
 	cnpgv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
 	"github.com/go-logr/logr"
@@ -19,6 +20,14 @@ import (
 	util "github.com/documentdb/documentdb-operator/internal/utils"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+// isCombinedImageMode returns true when the DocumentDB CR opts into the
+// combined-image path (single OCI image carrying both postgres binaries and
+// extensions, no separate ImageVolume mount). Triggered by leaving
+// spec.documentDBImage unset/empty.
+func isCombinedImageMode(documentdb *dbpreview.DocumentDB) bool {
+	return strings.TrimSpace(documentdb.Spec.DocumentDBImage) == ""
+}
 
 func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, documentdbImage, serviceAccountName, storageClass string, isPrimaryRegion bool, log logr.Logger) *cnpgv1.Cluster {
 	sidecarPluginName := documentdb.Spec.SidecarInjectorPluginName
@@ -39,6 +48,11 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 	var storageClassPointer *string
 	if storageClass != "" {
 		storageClassPointer = &storageClass
+	}
+
+	combinedImage := isCombinedImageMode(documentdb)
+	if combinedImage {
+		log.Info("Combined-image mode enabled (spec.documentDBImage empty); skipping ImageVolume extensions plumbing", "documentdbName", documentdb.Name)
 	}
 
 	// Set ImageVolumeSource.PullPolicy for the extension image when configured.
@@ -111,37 +125,9 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 						Parameters: params,
 					}}
 				}(),
-				PostgresConfiguration: cnpgv1.PostgresConfiguration{
-					Extensions: []cnpgv1.ExtensionConfiguration{
-						{
-							Name:                 "documentdb",
-							ImageVolumeSource:    extensionImageSource,
-							DynamicLibraryPath:   []string{"lib"},
-							ExtensionControlPath: []string{"share"},
-							LdLibraryPath:        []string{"lib", "system"},
-						},
-					},
-					AdditionalLibraries: []string{"pg_cron", "pg_documentdb_core", "pg_documentdb"},
-					Parameters: func() map[string]string {
-						params := map[string]string{
-							"cron.database_name":    "postgres",
-							"max_replication_slots": "10",
-							"max_wal_senders":       "10",
-						}
-						// TODO: once DocumentDB supports change streams natively, additional GUC parameters may be needed here.
-						if dbpreview.IsFeatureGateEnabled(documentdb, dbpreview.FeatureGateChangeStreams) {
-							params["wal_level"] = "logical"
-						}
-						return params
-					}(),
-					PgHBA: []string{
-						"host all all 0.0.0.0/0 trust",
-						"host all all ::0/0 trust",
-						"host replication all all trust",
-					},
-				},
-				Bootstrap: getBootstrapConfiguration(documentdb, isPrimaryRegion, log),
-				LogLevel:  cmp.Or(documentdb.Spec.LogLevel, "info"),
+				PostgresConfiguration: buildPostgresConfiguration(documentdb, extensionImageSource, combinedImage),
+				Bootstrap:             getBootstrapConfiguration(documentdb, isPrimaryRegion, log),
+				LogLevel:              cmp.Or(documentdb.Spec.LogLevel, "info"),
 				Backup: &cnpgv1.BackupConfiguration{
 					VolumeSnapshot: &cnpgv1.VolumeSnapshotConfiguration{
 						SnapshotOwnerReference: "backup", // Set owner reference to 'backup' so that snapshots are deleted when Backup resource is deleted
@@ -152,8 +138,79 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 			}
 			spec.MaxStopDelay = getMaxStopDelayOrDefault(documentdb)
 
+			// Combined-image mode: honour optional UID/GID overrides for the
+			// in-image postgres user (e.g., the emulator image runs as uid 1000).
+			// Pointer types let us distinguish "unset" from "explicitly 0".
+			if documentdb.Spec.PostgresUID != nil {
+				spec.PostgresUID = int64(*documentdb.Spec.PostgresUID)
+			}
+			if documentdb.Spec.PostgresGID != nil {
+				spec.PostgresGID = int64(*documentdb.Spec.PostgresGID)
+			}
+
 			return spec
 		}(),
+	}
+}
+
+// buildPostgresConfiguration assembles the PostgresConfiguration block for the
+// CNPG cluster. In the default (ImageVolume) mode, the documentdb extension is
+// mounted via ImageVolumeSource and the operator injects DocumentDB-specific
+// shared_preload_libraries and GUC parameters. In combined-image mode the
+// extensions are pre-baked into spec.postgresImage, so we leave the Extensions
+// list empty and defer shared_preload_libraries / GUC tuning to the image's
+// own postgres configuration unless the caller explicitly opts in via
+// spec.preloadLibraries.
+func buildPostgresConfiguration(documentdb *dbpreview.DocumentDB, extensionImageSource corev1.ImageVolumeSource, combinedImage bool) cnpgv1.PostgresConfiguration {
+	// PgHBA is unrelated to the extension layout and stays the same in both modes.
+	pgHBA := []string{
+		"host all all 0.0.0.0/0 trust",
+		"host all all ::0/0 trust",
+		"host replication all all trust",
+	}
+
+	if combinedImage {
+		// Combined-image mode: skip the ImageVolume extension mount and the
+		// documentdb-extension-specific GUC parameters. Honour an explicit
+		// preloadLibraries override if provided; otherwise leave nil so the
+		// image's own shared_preload_libraries setting is authoritative.
+		return cnpgv1.PostgresConfiguration{
+			AdditionalLibraries: documentdb.Spec.PreloadLibraries,
+			PgHBA:               pgHBA,
+		}
+	}
+
+	// Default (ImageVolume) mode: preserve byte-identical output to the
+	// pre-combined-image-mode behaviour.
+	additionalLibraries := documentdb.Spec.PreloadLibraries
+	if additionalLibraries == nil {
+		additionalLibraries = []string{"pg_cron", "pg_documentdb_core", "pg_documentdb"}
+	}
+
+	return cnpgv1.PostgresConfiguration{
+		Extensions: []cnpgv1.ExtensionConfiguration{
+			{
+				Name:                 "documentdb",
+				ImageVolumeSource:    extensionImageSource,
+				DynamicLibraryPath:   []string{"lib"},
+				ExtensionControlPath: []string{"share"},
+				LdLibraryPath:        []string{"lib", "system"},
+			},
+		},
+		AdditionalLibraries: additionalLibraries,
+		Parameters: func() map[string]string {
+			params := map[string]string{
+				"cron.database_name":    "postgres",
+				"max_replication_slots": "10",
+				"max_wal_senders":       "10",
+			}
+			// TODO: once DocumentDB supports change streams natively, additional GUC parameters may be needed here.
+			if dbpreview.IsFeatureGateEnabled(documentdb, dbpreview.FeatureGateChangeStreams) {
+				params["wal_level"] = "logical"
+			}
+			return params
+		}(),
+		PgHBA: pgHBA,
 	}
 }
 
@@ -202,17 +259,24 @@ func getBootstrapConfiguration(documentdb *dbpreview.DocumentDB, isPrimaryRegion
 		}
 	}
 
-	return getDefaultBootstrapConfiguration()
+	return getDefaultBootstrapConfiguration(documentdb)
 }
 
-func getDefaultBootstrapConfiguration() *cnpgv1.BootstrapConfiguration {
+func getDefaultBootstrapConfiguration(documentdb *dbpreview.DocumentDB) *cnpgv1.BootstrapConfiguration {
+	// Honour an explicit PostInitSQL override (typically set in combined-image
+	// mode where the baked-in extension set differs from documentdb's default).
+	postInitSQL := []string{
+		"CREATE EXTENSION documentdb CASCADE",
+		"CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'",
+		"ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS",
+	}
+	if documentdb != nil && len(documentdb.Spec.PostInitSQL) > 0 {
+		postInitSQL = documentdb.Spec.PostInitSQL
+	}
+
 	return &cnpgv1.BootstrapConfiguration{
 		InitDB: &cnpgv1.BootstrapInitDB{
-			PostInitSQL: []string{
-				"CREATE EXTENSION documentdb CASCADE",
-				"CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'",
-				"ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS",
-			},
+			PostInitSQL: postInitSQL,
 		},
 	}
 }
