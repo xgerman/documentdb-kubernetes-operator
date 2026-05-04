@@ -75,6 +75,62 @@ jobs:
     secrets: inherit
 
   # ---------------------------------------------------------------------------
+  # Compute the E2E matrix as a single `include` array. We do this in a
+  # dedicated job because:
+  #
+  #   1. GitHub Actions does NOT expand `matrix.*` inside a job-level
+  #      `if:` expression — that's a parser-level error, not a runtime
+  #      one — so we cannot gate the `performance` rows directly on the
+  #      job's `if:`.
+  #   2. The static `matrix:` syntax does not accept expressions in its
+  #      list values, so we cannot conditionally drop rows there either.
+  #
+  # Emitting the full include[] from a setup job + consuming it via
+  # `fromJSON` is the idiomatic workaround. `performance` is included
+  # only on workflow_dispatch / schedule / PRs labeled `run-perf`.
+  # ---------------------------------------------------------------------------
+  compute-matrix:
+    name: Compute E2E Matrix
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.set.outputs.include }}
+    steps:
+      - id: set
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HAS_RUN_PERF_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'run-perf') }}
+        run: |
+          set -euo pipefail
+          base='[
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"smoke","default_filter":"smoke","procs":"auto"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"lifecycle","default_filter":"lifecycle","procs":"auto"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"scale","default_filter":"scale","procs":"2"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"data","default_filter":"data","procs":"auto"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"backup","default_filter":"backup","procs":"2"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"tls","default_filter":"tls","procs":"auto"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"upgrade","default_filter":"upgrade","procs":"1"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"smoke","default_filter":"smoke","procs":"auto"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"lifecycle","default_filter":"lifecycle","procs":"auto"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"scale","default_filter":"scale","procs":"2"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"data","default_filter":"data","procs":"auto"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"backup","default_filter":"backup","procs":"2"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"tls","default_filter":"tls","procs":"auto"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"upgrade","default_filter":"upgrade","procs":"1"}
+          ]'
+          perf='[
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"performance","default_filter":"performance","procs":"1"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"performance","default_filter":"performance","procs":"1"}
+          ]'
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "schedule" || "$HAS_RUN_PERF_LABEL" == "true" ]]; then
+            include="$(jq -c '. + $p' --argjson p "$perf" <<<"$base")"
+          else
+            include="$(jq -c '.' <<<"$base")"
+          fi
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
   # E2E matrix.
   #
   # Rows = (label-group, architecture). The label-group carries the
@@ -88,71 +144,14 @@ jobs:
   # ---------------------------------------------------------------------------
   e2e:
     name: E2E ${{ matrix.group }} (${{ matrix.architecture }})
-    needs: build
-    if: |
-      always()
-      && needs.build.result == 'success'
-      && (
-        matrix.group != 'performance'
-        || github.event_name == 'workflow_dispatch'
-        || contains(github.event.pull_request.labels.*.name, 'run-perf')
-      )
+    needs: [build, compute-matrix]
+    if: always() && needs.build.result == 'success' && needs.compute-matrix.result == 'success'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        architecture: [amd64, arm64]
-        group:
-          - smoke
-          - lifecycle
-          - scale
-          - data
-          - performance
-          - backup
-          - tls
-          - feature
-          - upgrade
-        include:
-          # Per-group defaults. `default_filter` is used when the
-          # workflow_dispatch `label` input is empty.
-          #
-          # NOTE: the design doc's "feature || exposure || status" filter
-          # uses the code-level label name `feature-gates` (see
-          # test/e2e/labels.go FeatureLabel). The design-doc name
-          # `feature` is a shorthand; we honour code as source of truth.
-          - group: smoke
-            default_filter: 'smoke'
-            procs: 'auto'
-          - group: lifecycle
-            default_filter: 'lifecycle'
-            procs: 'auto'
-          - group: scale
-            default_filter: 'scale'
-            procs: '2'
-          - group: data
-            default_filter: 'data'
-            procs: 'auto'
-          - group: performance
-            default_filter: 'performance'
-            procs: '1'
-          - group: backup
-            default_filter: 'backup'
-            procs: '2'
-          - group: tls
-            default_filter: 'tls'
-            procs: 'auto'
-          - group: feature
-            default_filter: 'feature-gates || exposure || status'
-            procs: 'auto'
-          - group: upgrade
-            default_filter: 'upgrade'
-            procs: '1'
-          # Per-architecture runner mapping.
-          - architecture: amd64
-            runner: ubuntu-22.04
-          - architecture: arm64
-            runner: ubuntu-22.04-arm
+        include: ${{ fromJSON(needs.compute-matrix.outputs.include) }}
     env:
       E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       TEST_DEPTH: ${{ inputs.depth || 'Medium' }}
