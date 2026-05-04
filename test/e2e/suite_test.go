@@ -20,7 +20,8 @@
 //
 // Environment variables consulted by the suite:
 //
-//	TEST_DEPTH        // 0–4 — depth tier, see levels.go. Default: 1 (High).
+//	TEST_DEPTH        // 0–4 or named tier (Highest..Lowest, case-insensitive),
+//	                  // see levels.go. Default: 2 (Medium).
 //	TEST_TIMEOUTS     // optional timeout profile, consumed by pkg/e2eutils/timeouts.
 //	KUBECONFIG        // standard; required to reach the test cluster.
 //	POSTGRES_IMG      // placeholder for CNPG's semver parsing (default busybox:17.2).

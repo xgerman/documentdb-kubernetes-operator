@@ -31,7 +31,7 @@ on:
         type: string
         default: ''
       depth:
-        description: 'Test depth tier (maps to TEST_DEPTH / E2E_DEPTH)'
+        description: 'Test depth tier (mapped to TEST_DEPTH; accepts Low|Medium|High)'
         required: false
         type: choice
         options:
@@ -155,7 +155,6 @@ jobs:
             runner: ubuntu-22.04-arm
     env:
       E2E_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
-      E2E_DEPTH: ${{ inputs.depth || 'Medium' }}
       TEST_DEPTH: ${{ inputs.depth || 'Medium' }}
       GINKGO_LABEL_FILTER: ${{ inputs.label != '' && inputs.label || matrix.default_filter }}
       E2E_KEEP_CLUSTERS: ${{ inputs.keep_clusters && '1' || '0' }}
@@ -195,7 +194,7 @@ jobs:
             echo ""
             echo "- **Label filter**: \`${GINKGO_LABEL_FILTER}\`"
             echo "- **Procs**: \`${{ matrix.procs }}\`"
-            echo "- **Depth**: \`${E2E_DEPTH}\`"
+            echo "- **Depth**: \`${TEST_DEPTH}\`"
             echo "- **Run ID**: \`${E2E_RUN_ID}\`"
             echo "- **Image tag**: \`${IMAGE_TAG}\`"
             echo "- **Chart version**: \`${CHART_VERSION}\`"

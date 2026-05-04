@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"sync"
 
+	cnpgtests "github.com/cloudnative-pg/cloudnative-pg/tests"
 	"github.com/onsi/ginkgo/v2"
 )
 
@@ -13,51 +16,87 @@ import (
 // execute only the most important specs while nightly/manual runs
 // expand coverage.
 //
-// NOTE: CNPG does not currently expose a `tests/utils/levels` package
-// in v1.28.1 (verified with `go doc`). If upstream adds one later,
-// replace this file with a thin re-export.
-type Level int
+// Level is a type alias for CNPG's tests.Level so the constants match
+// upstream's iota ordering byte-for-byte. We keep our own SkipUnlessLevel
+// helper because CNPG does not export an equivalent.
+type Level = cnpgtests.Level
 
+// Depth tier constants re-exported from CNPG so callers can keep using
+// e2e.Highest…e2e.Lowest without importing the upstream package.
 const (
-	// Highest runs only the most critical specs (fast smoke).
-	Highest Level = iota
-	// High adds the core area-suite coverage.
-	High
-	// Medium adds broader coverage for the area. This is the default
-	// per docs/designs/e2e-test-suite.md.
-	Medium
-	// Low adds long-running or edge-case scenarios.
-	Low
-	// Lowest runs everything, including slow/destructive corners.
-	Lowest
+	Highest = cnpgtests.Highest
+	High    = cnpgtests.High
+	Medium  = cnpgtests.Medium
+	Low     = cnpgtests.Low
+	Lowest  = cnpgtests.Lowest
 )
 
 // testDepthEnv is the environment variable consulted by CurrentLevel.
-// Values are integers 0–4 mapping to Highest…Lowest. Invalid or unset
-// values fall back to defaultLevel (Medium).
+// Accepted values are integers 0–4 mapping to Highest…Lowest, or the
+// case-insensitive names "highest", "high", "medium", "low", "lowest".
+// Invalid or unset values fall back to defaultLevel (Medium) and emit a
+// one-shot warning to GinkgoWriter so misconfiguration is visible.
 const testDepthEnv = "TEST_DEPTH"
 
 // defaultLevel is the depth applied when TEST_DEPTH is unset or
 // invalid. Chosen to match the design document.
 const defaultLevel = Medium
 
+// invalidDepthWarn ensures we log the "invalid TEST_DEPTH" warning at
+// most once per process so a tight Eventually loop doesn't spam the
+// output.
+var invalidDepthWarn sync.Once
+
 // CurrentLevel reads TEST_DEPTH from the environment and returns the
-// corresponding Level. Defaults to Medium when unset or invalid.
+// corresponding Level. Accepts both numeric strings (0..4) and
+// case-insensitive names (Highest..Lowest). Defaults to Medium when
+// unset; logs a one-time warning and falls back to Medium when set to
+// anything else.
 func CurrentLevel() Level {
 	raw, ok := os.LookupEnv(testDepthEnv)
 	if !ok {
 		return defaultLevel
 	}
-	v, err := strconv.Atoi(raw)
-	if err != nil {
-		return defaultLevel
+	if l, ok := parseLevel(raw); ok {
+		return l
 	}
-	switch Level(v) {
-	case Highest, High, Medium, Low, Lowest:
-		return Level(v)
-	default:
-		return defaultLevel
+	invalidDepthWarn.Do(func() {
+		fmt.Fprintf(ginkgo.GinkgoWriter,
+			"e2e: WARNING — TEST_DEPTH=%q is not a recognized depth (expected 0..4 "+
+				"or one of Highest|High|Medium|Low|Lowest); falling back to Medium.\n",
+			raw)
+	})
+	return defaultLevel
+}
+
+// parseLevel parses a single TEST_DEPTH value. Returns (level, true) on
+// success and (defaultLevel, false) on any unrecognized input.
+func parseLevel(raw string) (Level, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultLevel, false
 	}
+	if v, err := strconv.Atoi(trimmed); err == nil {
+		switch Level(v) {
+		case Highest, High, Medium, Low, Lowest:
+			return Level(v), true
+		default:
+			return defaultLevel, false
+		}
+	}
+	switch strings.ToLower(trimmed) {
+	case "highest":
+		return Highest, true
+	case "high":
+		return High, true
+	case "medium":
+		return Medium, true
+	case "low":
+		return Low, true
+	case "lowest":
+		return Lowest, true
+	}
+	return defaultLevel, false
 }
 
 // ShouldRun reports whether a spec declared at `required` should run
