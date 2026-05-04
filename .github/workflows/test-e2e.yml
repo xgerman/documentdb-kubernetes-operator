@@ -240,10 +240,18 @@ jobs:
         run: |
           mkdir -p artifacts
           set -o pipefail
+          # ginkgo `--procs` is integer-only. The matrix encodes "auto"
+          # for groups that benefit from CPU-count parallelism; translate
+          # it to `-p` (ginkgo's documented auto-detect flag), and pass an
+          # explicit `--procs=N` only when the matrix pinned a fixed N.
+          PROCS_FLAG="--procs=${{ matrix.procs }}"
+          if [ "${{ matrix.procs }}" = "auto" ]; then
+            PROCS_FLAG="-p"
+          fi
           ginkgo run \
             -r \
             --label-filter="${GINKGO_LABEL_FILTER}" \
-            --procs=${{ matrix.procs }} \
+            ${PROCS_FLAG} \
             --timeout=75m \
             --keep-going \
             --junit-report=junit.xml \
