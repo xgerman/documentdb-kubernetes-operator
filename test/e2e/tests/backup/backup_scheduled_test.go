@@ -24,11 +24,12 @@ var _ = Describe("DocumentDB backup — scheduled CSI snapshots",
 		const (
 			clusterName   = "backup-scheduled"
 			scheduledName = "backup-scheduled-every-minute"
-			// CNPG's ScheduledBackup parser accepts the 6-field crontab
-			// form (with a leading seconds slot). "0 */1 * * * *" means
-			// "at :00 of every minute" — the same cadence the workflow
-			// uses for its */1 * * * * 5-field crontab.
-			schedule = "0 */1 * * * *"
+			// DocumentDB operator's ScheduledBackup uses
+			// robfig/cron.ParseStandard (5-field crontab, no seconds
+			// slot). See operator/src/internal/controller/
+			// scheduledbackup_controller.go. "*/1 * * * *" means every
+			// minute — same cadence the workflow uses.
+			schedule = "*/1 * * * *"
 		)
 		var (
 			ctx context.Context
