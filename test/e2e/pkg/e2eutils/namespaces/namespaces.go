@@ -51,11 +51,22 @@ func defaultRunID() string {
 // specs are avoided by the hash; determinism within a spec is provided
 // by the hash being a pure function of the FullText.
 //
+// When Ginkgo retries a flaked spec via --flake-attempts, NumAttempts
+// rises from 1 (first run) to 2 (first retry), 3 (second retry), and
+// so on. Re-using the first-attempt namespace name on retry would
+// race the previous attempt's DeferCleanup-driven namespace delete:
+// the retry's BeforeEach typically wins the recreate race and then
+// fails creating any object inside the still-Terminating namespace.
+// To avoid that, retries (NumAttempts >= 2) get an "-a{n}" segment
+// in the name; the first attempt keeps the historical layout so log
+// searches and triage tooling continue to work for the common case.
+//
 // If area is empty, "spec" is used. Callers should pass the area
 // label constant (e.g., e2e.LifecycleLabel) to make failures easier to
 // triage from kubectl output.
 func NamespaceForSpec(area string) string {
-	return buildName(area, ginkgo.CurrentSpecReport().FullText(), procID())
+	report := ginkgo.CurrentSpecReport()
+	return buildName(area, report.FullText(), procID(), report.NumAttempts)
 }
 
 // procID returns the ginkgo parallel process id, defaulting to "1"
@@ -70,7 +81,14 @@ func procID() string {
 
 // buildName is the pure core of NamespaceForSpec, factored out to make
 // it trivially unit-testable without a Ginkgo runtime.
-func buildName(area, specText, proc string) string {
+//
+// attempt is the 1-based Ginkgo NumAttempts for the current spec.
+// Values <= 1 (including the zero-value handed to unit tests written
+// before this parameter existed) reproduce the historical naming
+// layout. Values >= 2 inject an "-a{attempt}" segment so retries can
+// safely create a fresh namespace while the previous attempt's
+// namespace is still Terminating.
+func buildName(area, specText, proc string, attempt int) string {
 	areaPart := sanitizeSegment(area)
 	if areaPart == "" {
 		areaPart = "spec"
@@ -81,13 +99,18 @@ func buildName(area, specText, proc string) string {
 	if runID == "" {
 		runID = "unset"
 	}
-	name := fmt.Sprintf("e2e-%s-%s-p%s-%s", areaPart, runID, proc, hash)
+	attemptSeg := ""
+	if attempt > 1 {
+		attemptSeg = fmt.Sprintf("-a%d", attempt)
+	}
+	name := fmt.Sprintf("e2e-%s-%s-p%s%s-%s", areaPart, runID, proc, attemptSeg, hash)
 	if len(name) <= maxNameLen {
 		return name
 	}
 	// Truncate areaPart first, then runID, preserving the trailing
-	// hash (which is what guarantees uniqueness).
-	suffix := fmt.Sprintf("-p%s-%s", proc, hash)
+	// hash (which is what guarantees uniqueness) and the attempt
+	// suffix (which is what disambiguates retry namespaces).
+	suffix := fmt.Sprintf("-p%s%s-%s", proc, attemptSeg, hash)
 	budget := maxNameLen - len("e2e-") - len(suffix) - 1 // -1 for the dash between area and runID
 	if budget < 2 {
 		// Degenerate input; fall back to hash-only.
