@@ -37,13 +37,19 @@ var _ = SynchronizedBeforeSuite(
 	},
 )
 
+// SynchronizedAfterSuite: per Ginkgo v2, the FIRST callback runs on
+// every parallel process as soon as that process's specs finish; the
+// SECOND callback runs only on process #1 after every other process
+// has exited. Shared fixture teardown (shared-ro / shared-scale) must
+// live in the second callback so a fast process cannot delete a
+// fixture another process is still exercising.
 var _ = SynchronizedAfterSuite(
+	func(_ SpecContext) {},
 	func(ctx SpecContext) {
 		if err := e2e.TeardownSuite(ctx); err != nil {
 			fmt.Fprintf(GinkgoWriter, "exposure teardown: %v\n", err)
 		}
 	},
-	func(_ SpecContext) {},
 )
 
 // BeforeEach in this area aborts the spec if the operator pod has
