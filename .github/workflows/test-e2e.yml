@@ -101,27 +101,35 @@ jobs:
           HAS_RUN_PERF_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'run-perf') }}
         run: |
           set -euo pipefail
+          # paths: space-separated Ginkgo package paths to scan. Scoped
+          # per group so a backup row only compiles + spawns tests/backup,
+          # not the whole tests/* tree (the previous "ginkgo run -r
+          # ./tests/..." discovered all 10 spec packages every row and
+          # then label-filtered ~52 of 60 specs at runtime — wasteful
+          # compile/process startup × 16 matrix rows). The smoke label
+          # is currently only on tests/lifecycle/deploy; the feature row
+          # is the only multi-package row by design.
           base='[
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"smoke","default_filter":"smoke","procs":"auto"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"lifecycle","default_filter":"lifecycle","procs":"auto"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"scale","default_filter":"scale","procs":"2"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"data","default_filter":"data","procs":"auto"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"backup","default_filter":"backup","procs":"2"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"tls","default_filter":"tls","procs":"auto"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto"},
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"upgrade","default_filter":"upgrade","procs":"1"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"smoke","default_filter":"smoke","procs":"auto"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"lifecycle","default_filter":"lifecycle","procs":"auto"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"scale","default_filter":"scale","procs":"2"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"data","default_filter":"data","procs":"auto"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"backup","default_filter":"backup","procs":"2"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"tls","default_filter":"tls","procs":"auto"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"upgrade","default_filter":"upgrade","procs":"1"}
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"smoke","default_filter":"smoke","procs":"auto","paths":"./tests/lifecycle"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"lifecycle","default_filter":"lifecycle","procs":"auto","paths":"./tests/lifecycle"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"scale","default_filter":"scale","procs":"2","paths":"./tests/scale"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"data","default_filter":"data","procs":"auto","paths":"./tests/data"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"backup","default_filter":"backup","procs":"2","paths":"./tests/backup"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"tls","default_filter":"tls","procs":"auto","paths":"./tests/tls"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto","paths":"./tests/feature_gates ./tests/exposure ./tests/status"},
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"upgrade","default_filter":"upgrade","procs":"1","paths":"./tests/upgrade"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"smoke","default_filter":"smoke","procs":"auto","paths":"./tests/lifecycle"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"lifecycle","default_filter":"lifecycle","procs":"auto","paths":"./tests/lifecycle"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"scale","default_filter":"scale","procs":"2","paths":"./tests/scale"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"data","default_filter":"data","procs":"auto","paths":"./tests/data"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"backup","default_filter":"backup","procs":"2","paths":"./tests/backup"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"tls","default_filter":"tls","procs":"auto","paths":"./tests/tls"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"feature","default_filter":"feature-gates || exposure || status","procs":"auto","paths":"./tests/feature_gates ./tests/exposure ./tests/status"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"upgrade","default_filter":"upgrade","procs":"1","paths":"./tests/upgrade"}
           ]'
           perf='[
-            {"architecture":"amd64","runner":"ubuntu-22.04","group":"performance","default_filter":"performance","procs":"1"},
-            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"performance","default_filter":"performance","procs":"1"}
+            {"architecture":"amd64","runner":"ubuntu-22.04","group":"performance","default_filter":"performance","procs":"1","paths":"./tests/performance"},
+            {"architecture":"arm64","runner":"ubuntu-22.04-arm","group":"performance","default_filter":"performance","procs":"1","paths":"./tests/performance"}
           ]'
           if [[ "$EVENT_NAME" == "workflow_dispatch" || "$EVENT_NAME" == "schedule" || "$HAS_RUN_PERF_LABEL" == "true" ]]; then
             include="$(jq -c '. + $p' --argjson p "$perf" <<<"$base")"
@@ -287,8 +295,14 @@ jobs:
           if [ "${{ matrix.procs }}" = "auto" ]; then
             PROCS_FLAG="-p"
           fi
+          # No -r: each matrix row already specifies the exact package
+          # paths it cares about (matrix.paths). Recursing from
+          # ./tests/... discovered all 10 spec packages and then
+          # label-filtered ~87% of them at runtime — that bought us
+          # nothing except 9 extra compiled binaries and 9 extra
+          # process spawns per row. The matrix is the source of truth
+          # for what each row runs.
           ginkgo run \
-            -r \
             --label-filter="${GINKGO_LABEL_FILTER}" \
             ${PROCS_FLAG} \
             --timeout=75m \
@@ -296,7 +310,7 @@ jobs:
             --keep-going \
             --junit-report=junit.xml \
             --output-dir=artifacts \
-            ./tests/... 2>&1 | tee artifacts/ginkgo.log
+            ${{ matrix.paths }} 2>&1 | tee artifacts/ginkgo.log
 
       - name: Collect cluster diagnostics
         if: failure()
