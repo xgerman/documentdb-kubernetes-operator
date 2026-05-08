@@ -1204,6 +1204,31 @@ spec:
                   Changing this is not recommended for most users.
                   If not specified, defaults to a version that matches the DocumentDB operator version.
                 type: string
+              imagePullSecrets:
+                description: |-
+                  ImagePullSecrets is the list of references to secrets in the same namespace
+                  to use for pulling any of the images used by the DocumentDB cluster
+                  (postgresImage, gatewayImage, sidecar). Only the .name field is honoured,
+                  matching the standard Kubernetes corev1.LocalObjectReference contract.
+                  Equivalent to PodSpec.ImagePullSecrets — used when the configured images
+                  live in a private registry such as a token-protected ACR.
+                items:
+                  description: |-
+                    LocalObjectReference contains enough information to let you locate the
+                    referenced object inside the same namespace.
+                  properties:
+                    name:
+                      default: ""
+                      description: |-
+                        Name of the referent.
+                        This field is effectively required, but due to backwards compatibility is
+                        allowed to be empty. Instances of this type with an empty value here are
+                        almost certainly wrong.
+                        More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                      type: string
+                  type: object
+                  x-kubernetes-map-type: atomic
+                type: array
               instancesPerNode:
                 description: 'InstancesPerNode is the number of DocumentDB instances
                   per node. Range: 1-3.'

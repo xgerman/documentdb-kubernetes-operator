@@ -783,6 +783,68 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(Equal([]string{"pg_documentdb"}))
 		})
 	})
+
+	Context("imagePullSecrets propagation", func() {
+		// ImagePullSecrets is mode-agnostic — it must work for both default and
+		// combined-image deployments since either may pull from a private
+		// registry. The cluster-level field on the CNPG spec applies to every
+		// container scheduled into the cluster's pods (PG, gateway sidecar,
+		// any other plugin sidecars), so plumbing it once at this layer is
+		// enough.
+
+		baseSpec := func() dbpreview.DocumentDBSpec {
+			return dbpreview.DocumentDBSpec{
+				InstancesPerNode: 1,
+				DocumentDBImage:  "documentdb-oss:1.0",
+				Resource: dbpreview.Resource{
+					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
+				},
+			}
+		}
+
+		It("propagates a single secret reference verbatim", func() {
+			req := ctrl.Request{}
+			req.Name = "pull-secret-test"
+			req.Namespace = "default"
+			spec := baseSpec()
+			spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "acr-pull-secret"}}
+			documentdb := &dbpreview.DocumentDB{Spec: spec}
+
+			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.ImagePullSecrets).To(HaveLen(1))
+			Expect(cluster.Spec.ImagePullSecrets[0].Name).To(Equal("acr-pull-secret"))
+		})
+
+		It("propagates multiple secret references in order", func() {
+			req := ctrl.Request{}
+			req.Name = "pull-secret-test"
+			req.Namespace = "default"
+			spec := baseSpec()
+			spec.ImagePullSecrets = []corev1.LocalObjectReference{
+				{Name: "acr-postgres"},
+				{Name: "acr-gateway"},
+			}
+			documentdb := &dbpreview.DocumentDB{Spec: spec}
+
+			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.ImagePullSecrets).To(HaveLen(2))
+			Expect(cluster.Spec.ImagePullSecrets[0].Name).To(Equal("acr-postgres"))
+			Expect(cluster.Spec.ImagePullSecrets[1].Name).To(Equal("acr-gateway"))
+		})
+
+		It("leaves ImagePullSecrets nil when unset (default behaviour preserved)", func() {
+			req := ctrl.Request{}
+			req.Name = "pull-secret-test"
+			req.Namespace = "default"
+			documentdb := &dbpreview.DocumentDB{Spec: baseSpec()}
+
+			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
+
+			Expect(cluster.Spec.ImagePullSecrets).To(BeNil())
+		})
+	})
 })
 
 // Standard Go tests for additional coverage

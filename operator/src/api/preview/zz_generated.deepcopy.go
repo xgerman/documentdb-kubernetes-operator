@@ -8,6 +8,7 @@
 package preview
 
 import (
+	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -310,6 +311,11 @@ func (in *DocumentDBSpec) DeepCopyInto(out *DocumentDBSpec) {
 	if in.PostInitSQL != nil {
 		in, out := &in.PostInitSQL, &out.PostInitSQL
 		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.ImagePullSecrets != nil {
+		in, out := &in.ImagePullSecrets, &out.ImagePullSecrets
+		*out = make([]v1.LocalObjectReference, len(*in))
 		copy(*out, *in)
 	}
 }

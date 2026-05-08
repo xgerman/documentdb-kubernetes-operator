@@ -148,6 +148,19 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 				spec.PostgresGID = int64(*documentdb.Spec.PostgresGID)
 			}
 
+			// Plumb image pull secrets through to CNPG so they apply to the
+			// PG container, the gateway sidecar (which lives in the same pod),
+			// and any other container CNPG schedules into the cluster's pods.
+			// CNPG's LocalObjectReference is a structural alias of
+			// corev1.LocalObjectReference (single .Name field), so we translate
+			// element-by-element rather than coercing types.
+			if len(documentdb.Spec.ImagePullSecrets) > 0 {
+				spec.ImagePullSecrets = make([]cnpgv1.LocalObjectReference, 0, len(documentdb.Spec.ImagePullSecrets))
+				for _, ref := range documentdb.Spec.ImagePullSecrets {
+					spec.ImagePullSecrets = append(spec.ImagePullSecrets, cnpgv1.LocalObjectReference{Name: ref.Name})
+				}
+			}
+
 			return spec
 		}(),
 	}

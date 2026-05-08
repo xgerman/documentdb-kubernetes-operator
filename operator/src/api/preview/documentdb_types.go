@@ -5,6 +5,7 @@ package preview
 
 import (
 	cnpgv1 "github.com/cloudnative-pg/cloudnative-pg/api/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -165,6 +166,15 @@ type DocumentDBSpec struct {
 	// combined-image deployments that ship a different extension set.
 	// +optional
 	PostInitSQL []string `json:"postInitSQL,omitempty"`
+
+	// ImagePullSecrets is the list of references to secrets in the same namespace
+	// to use for pulling any of the images used by the DocumentDB cluster
+	// (postgresImage, gatewayImage, sidecar). Only the .name field is honoured,
+	// matching the standard Kubernetes corev1.LocalObjectReference contract.
+	// Equivalent to PodSpec.ImagePullSecrets — used when the configured images
+	// live in a private registry such as a token-protected ACR.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // BootstrapConfiguration defines how to bootstrap a DocumentDB cluster.
