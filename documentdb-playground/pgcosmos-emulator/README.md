@@ -16,6 +16,12 @@ emulator's own Postgres extensions, lifecycle-managed by CloudNative-PG.
 > after `docker build` and **never** pushes. Do not retag and push these images
 > to any external registry.
 
+> **Looking for HA / cloud failover?** See
+> [`../pgcosmos-emulator-aks-ha/`](../pgcosmos-emulator-aks-ha/) — same image,
+> running on AKS with `instancesPerNode: 2`, a private ACR (token-scoped pull
+> secret), and a Python `azure-cosmos` client that survives a primary-pod
+> deletion.
+
 ---
 
 ## What this gives you
@@ -50,7 +56,7 @@ patching either component:
 |----------|---------------------|---------------|
 | CNPG runs `/usr/lib/postgresql/<MAJOR>/bin/postgres` | only `/usr/bin/postgres` exists | symlinks `/usr/lib/postgresql/16/bin/*` → `/usr/bin/*` |
 | Gateway listens on `$GATEWAY_PORT` (operator default `10260`) | `PORT=8081` | `ENV PORT=10260` |
-| Plain HTTP (TLS Disabled mode) | `PROTOCOL=http` | `ENV PROTOCOL=http` (explicit) |
+| Gateway speaks HTTPS so Cosmos SDKs / IDE plugins accept the endpoint | `PROTOCOL=http` | `ENV PROTOCOL=https` (operator's sidecar plugin mounts the cert-manager-issued PEM at `/tls`; adapter wires it into `SetupConfiguration.CertificateOptions`) |
 | Gateway sidecar args from `lifecycle.go` (`--start-pg false --pg-port 5432 --create-user T --cert-path ... --key-file ...`) | `rust_gateway` takes a single positional JSON config path | `ENTRYPOINT documentdb-gateway-entry.sh` adapter translates args → SetupConfiguration JSON, exports libpq env, exec's `rust_gateway` |
 
 The Dockerfile is **all `FROM`/`ENV`/symlinks/COPY**. No emulator source is
@@ -69,7 +75,8 @@ ENTRYPOINT entirely. So the same image cleanly serves both roles.
   `rust_gateway` SetupConfiguration JSON).
 - `documentdb.yaml` — Namespace + `documentdb-credentials` Secret + `DocumentDB`
   CR (combined-image mode: `documentDBImage` is empty, `postgresImage` and
-  `gatewayImage` point at the wrapper image).
+  `gatewayImage` point at the wrapper image; `tls.gateway.mode: SelfSigned`
+  delegates cert issuance to cert-manager).
 - `build.sh` — `docker build` + `docker tag :dev :16.12` + `kind load
   docker-image` for both tags. Never pushes.
 - `deploy.sh` — runs `build.sh`, applies the manifest, waits for the cluster to
@@ -122,13 +129,14 @@ kubectl port-forward -n pgcosmos-emulator \
   svc/documentdb-service-pgcosmos-emulator 10260:10260
 ```
 
-Smoke-test:
+Smoke-test (`-k` because the cert-manager-issued cert SANs cover the in-cluster
+service DNS, not `localhost`):
 
 ```bash
-curl -s http://localhost:10260/                 # → HTTP 200 plus a hello string
-curl -s -X POST http://localhost:10260/dbs \
+curl -sk https://localhost:10260/                # → HTTP 200 plus a hello string
+curl -sk -X POST https://localhost:10260/dbs \
   -H 'content-type: application/json' \
-  -d '{}'                                       # → 400 "id is required ..."
+  -d '{}'                                        # → 400 "id is required ..."
 ```
 
 The 400 with that exact body confirms the gateway is reaching pgcosmos and the
@@ -180,20 +188,23 @@ so `rust_gateway`'s `tokio_postgres` client picks them up via libpq env.
 ## Validating against pgcosmos's .NET integration suite
 
 The pgcosmos repo ships an MSTest integration suite that drives the gateway
-purely over its public Cosmos HTTP surface. With this playground deployed and
-port-forwarded to `localhost:10260`, that suite passes **157 / 175** tests.
+purely over its public Cosmos HTTP surface. With this playground deployed
+(HTTPS via cert-manager-issued self-signed cert) and port-forwarded to
+`localhost:10260`, the gap is bounded by what a single-node, single-port
+configuration can satisfy:
 
-The 18 that fail are an exact match for what an HTTP-only, gateway-port-only
-configuration cannot satisfy:
-
-| Bucket | Count | Reason |
+| Bucket | Expected to fail | Reason |
 |--------|------:|--------|
 | `ThinClient_*`, `RntbdDirect_*` | 12 | Need the **RNTBD/TCP** thin-client port; this playground only exposes the HTTP gateway port (10260). |
-| `AddressesEndpoint_Https*`, `ThinClient_AcceptsTlsConnection`, `DatabaseAccount_*Locations*` | 6 | Assert `https://` scheme / TLS handshake / multi-region locations; this playground deliberately runs `tlsCertProvider: Disabled` and is single-node. |
+| `DatabaseAccount_*Locations*` (subset) | a few | Assert multi-region locations; this playground is single-node. |
 
-These are configuration limitations of this playground, not bugs in either the
-operator, the wrapper, or the emulator. A future TLS-enabled / multi-port
-variant would close the gap.
+`AddressesEndpoint_Https*` and `ThinClient_AcceptsTlsConnection` were the
+HTTP-only blockers in the prior `tlsCertProvider: Disabled` configuration. With
+HTTPS now the default, those should pass against this playground (subject to
+the test client trusting the self-signed cert — point `SSL_CERT_FILE` at the
+secret's `ca.crt`, or set `tlsAllowInvalidCertificates` / equivalent on the
+client). A future variant that also exposes the RNTBD/TCP port would close the
+remaining gap.
 
 To re-run the suite yourself (assuming you have the suite checked out
 elsewhere — pgcosmos source is **not** copied into this repo):
@@ -201,7 +212,7 @@ elsewhere — pgcosmos source is **not** copied into this repo):
 ```bash
 # 1. Make sure the port-forward is alive on :10260.
 # 2. From any directory that does not have a global.json ancestor:
-EXTERNAL_GATEWAY=http://localhost:10260/ PROTOCOL=http GATEWAYPORT=10260 \
+EXTERNAL_GATEWAY=https://localhost:10260/ PROTOCOL=https GATEWAYPORT=10260 \
   dotnet vstest /path/to/Cosmos.Postgres.Tests.Integration.dll \
   --TestCaseFilter:"TestCategory!=NOT_SUPPORTED" \
   --logger:"console;verbosity=normal"

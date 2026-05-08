@@ -1,0 +1,6 @@
+# Demo Python client for the pgcosmos-emulator HA failover walkthrough.
+#
+# Pinned conservatively so the demo is reproducible. azure-cosmos 4.x talks
+# the document-API protocol, which is exactly what the wrapper image exposes
+# via the gateway sidecar.
+azure-cosmos>=4.7,<5

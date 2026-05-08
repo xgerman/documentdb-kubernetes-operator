@@ -1,0 +1,88 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pgcosmos-emulator
+
+---
+# Application credentials. The default postInitSQL provisioned below creates
+# a `documentdb` PostgreSQL role with this password. The gateway sidecar
+# reads username/password from this secret to authenticate against the
+# in-pod Postgres. Keep these values in sync with whatever CREATE/ALTER ROLE
+# statements appear in spec.postInitSQL.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: documentdb-credentials
+  namespace: pgcosmos-emulator
+type: Opaque
+stringData:
+  username: documentdb
+  password: Admin100
+
+---
+# Combined-image-mode DocumentDB sized for HA failover demos:
+#
+#   * instancesPerNode: 2  → CNPG provisions one primary + one standby on
+#     separate nodes, with synchronous replication between them. The
+#     operator-managed Service routes to whichever pod currently has the
+#     `cnpg.io/instanceRole: primary` label, so failover is transparent
+#     to the client (DNS unchanged, LoadBalancer IP unchanged).
+#   * exposeViaService.serviceType: LoadBalancer → AKS provisions an Azure
+#     standard LB with a public IP. Use the printed IP from run_demo.sh
+#     for the demo's Cosmos client connection string.
+#   * imagePullSecrets → references the docker-registry secret created by
+#     acr-setup.sh. The operator forwards this verbatim to the underlying
+#     CNPG ClusterSpec, so it covers the postgres pod, the gateway sidecar,
+#     and any future plugin-injected sidecars.
+#   * postgresImage / gatewayImage → both point at the same wrapper image
+#     in our private ACR. CNPG's admission webhook requires postgresImage
+#     to carry a Postgres-version-shaped tag (16.12), so build-and-push.sh
+#     publishes the same content under both :16.12 and :dev.
+apiVersion: documentdb.io/preview
+kind: DocumentDB
+metadata:
+  name: pgcosmos-emulator
+  namespace: pgcosmos-emulator
+spec:
+  # >>> REPLACE ${ACR_LOGIN_SERVER} BEFORE APPLYING <<<
+  # run_demo.sh does the substitution via envsubst; if you apply this
+  # manifest by hand, fill in the registry login server (e.g.
+  # mypgcosmosacr.azurecr.io) printed by acr-setup.sh.
+  postgresImage: ${ACR_LOGIN_SERVER}/pgcosmos-emulator:16.12
+  gatewayImage:  ${ACR_LOGIN_SERVER}/pgcosmos-emulator:dev
+  imagePullSecrets:
+    - name: pgcosmos-acr-pull
+  postgresUID: 1000
+  postgresGID: 1000
+  preloadLibraries:
+    - citus
+    - rum
+    - helio_gin
+    - pg_cron
+    - pgcosmos
+  postInitSQL:
+    - "CREATE EXTENSION IF NOT EXISTS citus"
+    - "CREATE EXTENSION IF NOT EXISTS pg_cron"
+    - "CREATE EXTENSION IF NOT EXISTS rum"
+    - "CREATE EXTENSION IF NOT EXISTS helio_gin"
+    - "CREATE EXTENSION IF NOT EXISTS postgis"
+    - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
+    - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
+    - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"
+  nodeCount: 1
+  instancesPerNode: 2
+  resource:
+    storage:
+      pvcSize: 10Gi
+  exposeViaService:
+    serviceType: LoadBalancer
+  # SelfSigned tells the operator to create a cert-manager Issuer +
+  # Certificate (SANs include documentdb-service-<name>{,.<ns>,.<ns>.svc})
+  # and surface the resulting tls.crt/tls.key secret to the sidecar plugin.
+  # The gateway then runs with EnforceSslTcp=true; the demo client passes
+  # connection_verify=False to skip CA validation against the self-signed
+  # cert (we trust the LB IP is ours).
+  tls:
+    gateway:
+      mode: SelfSigned
