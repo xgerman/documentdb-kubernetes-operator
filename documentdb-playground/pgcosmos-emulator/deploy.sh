@@ -31,9 +31,17 @@ kubectl -n pgcosmos-emulator get svc
 
 cat <<'EOF'
 
-To reach the gateway from the host, port-forward the gateway service:
+To reach the gateway from the host, port-forward the operator-managed gateway
+service (note: 'documentdb-service-<cr-name>', not '<cr-name>-rw' — the latter
+is CNPG's read/write Postgres service on 5432):
 
-  kubectl -n pgcosmos-emulator port-forward svc/pgcosmos-emulator-service-rw 10260:10260
+  kubectl -n pgcosmos-emulator port-forward svc/documentdb-service-pgcosmos-emulator 10260:10260
+
+The gateway listens on HTTPS with a cert-manager-issued self-signed cert.
+'localhost' is not in the cert SAN list, so use -k or set
+tlsAllowInvalidCertificates / equivalent in your client:
+
+  curl -k https://localhost:10260/
 
 The default credentials live in the `documentdb-credentials` secret (username
 `documentdb`, password `Admin100`). Override them by editing documentdb.yaml

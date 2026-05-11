@@ -11,10 +11,14 @@
 FROM mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
 
 # 1. Align the gateway with the operator's GATEWAY_PORT default (10260).
-# 2. Keep the gateway on plain HTTP for v1; PEM->PFX conversion will be a
-#    follow-up once the operator learns to project PEM certificates as PFX.
+# 2. Default the gateway to HTTPS. rust_gateway has native PEM support
+#    (see rustls_pemfile usage in pgcosmos.rs), so the cert-manager-issued
+#    PEM secret that the operator mounts at /tls/tls.{crt,key} is consumed
+#    directly. The CR's spec.tls.gateway.mode controls cert generation; the
+#    adapter entrypoint flips EnforceSslTcp on iff --cert-path/--key-file
+#    args (or CERT_PATH/KEY_FILE env vars from the sidecar plugin) are set.
 ENV PORT=10260 \
-    PROTOCOL=http
+    PROTOCOL=https
 
 # CNPG's instance-manager invokes /usr/lib/postgresql/<MAJOR>/bin/postgres
 # (debian-style versioned layout). The base image installs PostgreSQL with
