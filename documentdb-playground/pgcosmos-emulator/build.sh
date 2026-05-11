@@ -9,7 +9,7 @@ IMAGE_REPO="${IMAGE_REPO:-localhost/pgcosmos-emulator}"
 IMAGE_TAG="${IMAGE_TAG:-dev}"
 # CNPG's admission webhook validates that spec.imageName carries a
 # Postgres-version-looking tag. The wrapper bundles PostgreSQL 16.12, so we
-# also publish that tag locally for use as spec.postgresImage.
+# also publish that tag locally for use as spec.advanced.postgresImage.
 PG_VERSION_TAG="${PG_VERSION_TAG:-16.12}"
 KIND_CLUSTER="${KIND_CLUSTER:-documentdb-test}"
 

@@ -74,8 +74,9 @@ ENTRYPOINT entirely. So the same image cleanly serves both roles.
 - `documentdb-gateway-entry.sh` — gateway sidecar adapter (operator args ↔
   `rust_gateway` SetupConfiguration JSON).
 - `documentdb.yaml` — Namespace + `documentdb-credentials` Secret + `DocumentDB`
-  CR (combined-image mode: `documentDBImage` is empty, `postgresImage` and
-  `gatewayImage` point at the wrapper image; `tls.gateway.mode: SelfSigned`
+  CR (combined-image mode: `spec.advanced.documentDBImage` is empty,
+  `spec.advanced.postgresImage` and `spec.advanced.gatewayImage` point at the
+  wrapper image; `tls.gateway.mode: SelfSigned`
   delegates cert issuance to cert-manager).
 - `build.sh` — `docker build` + `docker tag :dev :16.12` + `kind load
   docker-image` for both tags. Never pushes.
@@ -147,13 +148,13 @@ on transport or auth).
 
 ## How the manifest works
 
-The CR uses **combined-image mode** — `documentDBImage` is left blank, which
+The CR uses **combined-image mode** — `spec.advanced.documentDBImage` is left blank, which
 flips the operator at `operator/src/internal/cnpg/cnpg_cluster.go:26` into a
 path that:
 
 1. Skips its built-in `postgresql.extensions` populator.
-2. Uses `spec.preloadLibraries` and `spec.postInitSQL` verbatim instead of
-   merging operator defaults.
+2. Uses `spec.advanced.postgres.preloadLibraries` and `spec.advanced.postgres.postInitSQL`
+   verbatim instead of merging operator defaults.
 
 The manifest's `postInitSQL` therefore has to spell out the full extension
 install order itself:

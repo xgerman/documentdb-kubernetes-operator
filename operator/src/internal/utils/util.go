@@ -422,10 +422,10 @@ func GenerateConnectionString(documentdb *dbpreview.DocumentDB, serviceIp string
 }
 
 // GetGatewayImageForDocumentDB returns the gateway image for a DocumentDB instance.
-// Priority: spec.gatewayImage > spec.documentDBVersion > env.DOCUMENTDB_VERSION > default
+// Priority: spec.advanced.gatewayImage > spec.documentDBVersion > env.DOCUMENTDB_VERSION > default
 func GetGatewayImageForDocumentDB(documentdb *dbpreview.DocumentDB) string {
-	if documentdb.Spec.GatewayImage != "" {
-		return documentdb.Spec.GatewayImage
+	if documentdb.Spec.Advanced != nil && documentdb.Spec.Advanced.GatewayImage != "" {
+		return documentdb.Spec.Advanced.GatewayImage
 	}
 
 	// Use spec-level documentDBVersion if set
@@ -449,10 +449,10 @@ func GetGatewayImageForDocumentDB(documentdb *dbpreview.DocumentDB) string {
 }
 
 // GetDocumentDBImageForInstance returns the documentdb engine image.
-// Priority: spec.documentDBImage > spec.documentDBVersion > env.DOCUMENTDB_VERSION > default
+// Priority: spec.advanced.documentDBImage > spec.documentDBVersion > env.DOCUMENTDB_VERSION > default
 func GetDocumentDBImageForInstance(documentdb *dbpreview.DocumentDB) string {
-	if documentdb.Spec.DocumentDBImage != "" {
-		return documentdb.Spec.DocumentDBImage
+	if documentdb.Spec.Advanced != nil && documentdb.Spec.Advanced.DocumentDBImage != "" {
+		return documentdb.Spec.Advanced.DocumentDBImage
 	}
 
 	// Use spec-level documentDBVersion if set

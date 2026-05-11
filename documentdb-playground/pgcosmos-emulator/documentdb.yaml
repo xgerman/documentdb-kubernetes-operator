@@ -36,28 +36,6 @@ metadata:
   name: pgcosmos-emulator
   namespace: pgcosmos-emulator
 spec:
-  # CNPG's admission webhook validates that the postgres image tag looks like a
-  # Postgres version (debian-style "16.12-…" or "16"). The wrapper image wraps
-  # PostgreSQL 16.12, so we retag it as :16.12 in build.sh / CI.
-  postgresImage: localhost/pgcosmos-emulator:16.12
-  gatewayImage:  localhost/pgcosmos-emulator:dev
-  postgresUID: 1000
-  postgresGID: 1000
-  preloadLibraries:
-    - citus
-    - rum
-    - helio_gin
-    - pg_cron
-    - pgcosmos
-  postInitSQL:
-    - "CREATE EXTENSION IF NOT EXISTS citus"
-    - "CREATE EXTENSION IF NOT EXISTS pg_cron"
-    - "CREATE EXTENSION IF NOT EXISTS rum"
-    - "CREATE EXTENSION IF NOT EXISTS helio_gin"
-    - "CREATE EXTENSION IF NOT EXISTS postgis"
-    - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
-    - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
-    - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"
   nodeCount: 1
   instancesPerNode: 1
   resource:
@@ -65,6 +43,36 @@ spec:
       pvcSize: 10Gi
   exposeViaService:
     serviceType: ClusterIP
+  # SelfSigned mode tells the operator to create a cert-manager Issuer +
+  # Certificate (SANs: documentdb-service-<name>{,.<ns>,.<ns>.svc}) and surface
+  # the resulting tls.crt/tls.key secret to the sidecar plugin. The plugin
+  # mounts it at /tls and appends --cert-path/--key-file to the gateway
+  # container's args; the adapter entrypoint then sets EnforceSslTcp=true and
+  # CertType=pem in the rust_gateway SetupConfiguration JSON.
   tls:
     gateway:
-      mode: Disabled
+      mode: SelfSigned
+  advanced:
+    # CNPG's admission webhook validates that the postgres image tag looks like
+    # a Postgres version (debian-style "16.12-…" or "16"). The wrapper image
+    # wraps PostgreSQL 16.12, so we retag it as :16.12 in build.sh / CI.
+    postgresImage: localhost/pgcosmos-emulator:16.12
+    gatewayImage:  localhost/pgcosmos-emulator:dev
+    postgres:
+      uid: 1000
+      gid: 1000
+      preloadLibraries:
+        - citus
+        - rum
+        - helio_gin
+        - pg_cron
+        - pgcosmos
+      postInitSQL:
+        - "CREATE EXTENSION IF NOT EXISTS citus"
+        - "CREATE EXTENSION IF NOT EXISTS pg_cron"
+        - "CREATE EXTENSION IF NOT EXISTS rum"
+        - "CREATE EXTENSION IF NOT EXISTS helio_gin"
+        - "CREATE EXTENSION IF NOT EXISTS postgis"
+        - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
+        - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
+        - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"

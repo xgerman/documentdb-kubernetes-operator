@@ -388,12 +388,14 @@ func TestGetDocumentDBImageForInstance(t *testing.T) {
 		documentdb *dbpreview.DocumentDB
 		expected   string
 	}{
-		// Priority 1: spec.DocumentDBImage overrides everything
+		// Priority 1: spec.advanced.documentDBImage overrides everything
 		{
 			name: "custom image overrides feature gate",
 			documentdb: &dbpreview.DocumentDB{Spec: dbpreview.DocumentDBSpec{
-				DocumentDBImage: "custom-registry/custom-image:v1",
-				FeatureGates:    map[string]bool{dbpreview.FeatureGateChangeStreams: true},
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "custom-registry/custom-image:v1",
+				},
+				FeatureGates: map[string]bool{dbpreview.FeatureGateChangeStreams: true},
 			}},
 			expected: "custom-registry/custom-image:v1",
 		},
@@ -409,7 +411,9 @@ func TestGetDocumentDBImageForInstance(t *testing.T) {
 		{
 			name: "custom image overrides documentDBVersion",
 			documentdb: &dbpreview.DocumentDB{Spec: dbpreview.DocumentDBSpec{
-				DocumentDBImage:   "custom-registry/custom-image:v1",
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "custom-registry/custom-image:v1",
+				},
 				DocumentDBVersion: "1.2.3",
 			}},
 			expected: "custom-registry/custom-image:v1",
@@ -516,7 +520,9 @@ func TestGetGatewayImageForDocumentDB(t *testing.T) {
 		{
 			name: "explicit image takes precedence over everything",
 			spec: dbpreview.DocumentDBSpec{
-				GatewayImage: "custom-registry/custom-gateway:v1",
+				Advanced: &dbpreview.AdvancedSpec{
+					GatewayImage: "custom-registry/custom-gateway:v1",
+				},
 				FeatureGates: map[string]bool{dbpreview.FeatureGateChangeStreams: true},
 			},
 			expected: "custom-registry/custom-gateway:v1",
@@ -531,7 +537,9 @@ func TestGetGatewayImageForDocumentDB(t *testing.T) {
 		{
 			name: "explicit gatewayImage overrides documentDBVersion",
 			spec: dbpreview.DocumentDBSpec{
-				GatewayImage:      "custom-registry/custom-gateway:v1",
+				Advanced: &dbpreview.AdvancedSpec{
+					GatewayImage: "custom-registry/custom-gateway:v1",
+				},
 				DocumentDBVersion: "1.2.3",
 			},
 			expected: "custom-registry/custom-gateway:v1",

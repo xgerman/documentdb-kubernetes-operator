@@ -551,7 +551,8 @@ spec:
       storageClass: documentdb-storage
   exposeViaService:
     serviceType: LoadBalancer
-  sidecarInjectorPluginName: cnpg-i-sidecar-injector.documentdb.io
+  advanced:
+    sidecarInjectorPluginName: cnpg-i-sidecar-injector.documentdb.io
 EOF
     
     # Wait for DocumentDB to be ready

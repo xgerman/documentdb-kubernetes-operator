@@ -13,7 +13,7 @@ failover story. This walkthrough adds:
 
 * a private ACR holding the wrapper image (anonymous pull stays disabled),
 * an AKS cluster pulling the image via a token-scoped pull secret wired
-  through the new `spec.imagePullSecrets` field on the DocumentDB CR,
+  through the new `spec.advanced.imagePullSecrets` field on the DocumentDB CR,
 * `instancesPerNode: 2` so CNPG runs primary + sync standby,
 * a `LoadBalancer` Service whose endpoint follows the primary
   (`cnpg.io/instanceRole: primary`) automatically — clients see a single
@@ -47,10 +47,10 @@ ACR_LOGIN_SERVER=mypgcosmosacr.azurecr.io REPO=pgcosmos-emulator \
     ./build-and-push.sh
 ```
 
-> **Image tags.** CNPG's admission webhook validates that `postgresImage`
-> carries a Postgres-version-shaped tag, so the script publishes the same
-> image content under `:16.12` (used as `postgresImage`) and `:dev` (used
-> as `gatewayImage`).
+> **Image tags.** CNPG's admission webhook validates that
+> `spec.advanced.postgresImage` carries a Postgres-version-shaped tag, so the
+> script publishes the same image content under `:16.12` (used as
+> `spec.advanced.postgresImage`) and `:dev` (used as `spec.advanced.gatewayImage`).
 
 ## Run the demo
 
@@ -74,7 +74,7 @@ Watch the terminal:
 
 ## How it ties to the operator changes
 
-* `spec.imagePullSecrets` on the DocumentDB CR is forwarded verbatim to
+* `spec.advanced.imagePullSecrets` on the DocumentDB CR is forwarded verbatim to
   `cnpgv1.ClusterSpec.ImagePullSecrets`. CNPG schedules the gateway sidecar
   into the same pod as the postgres container, so a single secret reference
   covers every container — no separate plumbing for sidecars.

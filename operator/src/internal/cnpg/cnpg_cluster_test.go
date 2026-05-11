@@ -174,12 +174,16 @@ var _ = Describe("getDefaultBootstrapConfiguration", func() {
 		Expect(result.InitDB.PostInitSQL).To(ContainElement("ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"))
 	})
 
-	It("honours spec.postInitSQL override when set", func() {
+	It("honours spec.advanced.postgres.postInitSQL override when set", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
-				PostInitSQL: []string{
-					"CREATE EXTENSION pgcosmos CASCADE",
-					"GRANT ALL ON SCHEMA public TO postgres",
+				Advanced: &dbpreview.AdvancedSpec{
+					Postgres: &dbpreview.PostgresSpec{
+						PostInitSQL: []string{
+							"CREATE EXTENSION pgcosmos CASCADE",
+							"GRANT ALL ON SCHEMA public TO postgres",
+						},
+					},
 				},
 			},
 		}
@@ -202,8 +206,10 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 3,
-				PostgresImage:    "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
-				DocumentDBImage:  "documentdb-oss:1.0",
+				Advanced: &dbpreview.AdvancedSpec{
+					PostgresImage:   "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
+					DocumentDBImage: "documentdb-oss:1.0",
+				},
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{
 						PvcSize: "10Gi",
@@ -419,7 +425,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
-				DocumentDBImage:  "ext:1.0",
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "ext:1.0",
+				},
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 				},
@@ -439,7 +447,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
-				DocumentDBImage:  "ext:1.0",
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "ext:1.0",
+				},
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 				},
@@ -459,7 +469,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					DocumentDBImage:  "test-image:latest",
+					Advanced: &dbpreview.AdvancedSpec{
+						DocumentDBImage: "test-image:latest",
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -481,7 +493,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					DocumentDBImage:  "test-image:latest",
+					Advanced: &dbpreview.AdvancedSpec{
+						DocumentDBImage: "test-image:latest",
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -507,7 +521,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					DocumentDBImage:  "test-image:latest",
+					Advanced: &dbpreview.AdvancedSpec{
+						DocumentDBImage: "test-image:latest",
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{
 							PvcSize: "10Gi",
@@ -533,7 +549,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		documentdb := &dbpreview.DocumentDB{
 			Spec: dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
-				DocumentDBImage:  "test-image:latest",
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "test-image:latest",
+				},
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{
 						PvcSize: "10Gi",
@@ -651,8 +669,10 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			return &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					PostgresImage:    "mcr.microsoft.com/example/combined:vnext-preview",
-					// DocumentDBImage intentionally left empty -> combined mode
+					Advanced: &dbpreview.AdvancedSpec{
+						PostgresImage: "mcr.microsoft.com/example/combined:vnext-preview",
+						// DocumentDBImage intentionally left empty -> combined mode
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 					},
@@ -694,11 +714,13 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			Expect(cluster.Spec.Bootstrap.InitDB.PostInitSQL).To(ContainElement("CREATE EXTENSION documentdb CASCADE"))
 		})
 
-		It("uses spec.postInitSQL verbatim when provided", func() {
+		It("uses spec.advanced.postgres.postInitSQL verbatim when provided", func() {
 			documentdb := newCombinedDocumentDB()
-			documentdb.Spec.PostInitSQL = []string{
-				"CREATE EXTENSION pgcosmos CASCADE",
-				"CREATE ROLE app LOGIN PASSWORD 'x'",
+			documentdb.Spec.Advanced.Postgres = &dbpreview.PostgresSpec{
+				PostInitSQL: []string{
+					"CREATE EXTENSION pgcosmos CASCADE",
+					"CREATE ROLE app LOGIN PASSWORD 'x'",
+				},
 			}
 			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
 
@@ -708,20 +730,24 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			}))
 		})
 
-		It("propagates spec.preloadLibraries to AdditionalLibraries", func() {
+		It("propagates spec.advanced.postgres.preloadLibraries to AdditionalLibraries", func() {
 			documentdb := newCombinedDocumentDB()
-			documentdb.Spec.PreloadLibraries = []string{"pgcosmos", "pg_cron"}
+			documentdb.Spec.Advanced.Postgres = &dbpreview.PostgresSpec{
+				PreloadLibraries: []string{"pgcosmos", "pg_cron"},
+			}
 			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
 
 			Expect(cluster.Spec.PostgresConfiguration.AdditionalLibraries).To(Equal([]string{"pgcosmos", "pg_cron"}))
 		})
 
-		It("propagates spec.postgresUID and spec.postgresGID", func() {
+		It("propagates spec.advanced.postgres.uid and gid", func() {
 			documentdb := newCombinedDocumentDB()
 			uid := int32(1000)
 			gid := int32(1000)
-			documentdb.Spec.PostgresUID = &uid
-			documentdb.Spec.PostgresGID = &gid
+			documentdb.Spec.Advanced.Postgres = &dbpreview.PostgresSpec{
+				UID: &uid,
+				GID: &gid,
+			}
 			cluster := GetCnpgClusterSpec(newReq(), documentdb, "ignored:img", "test-sa", "", true, log)
 
 			Expect(cluster.Spec.PostgresUID).To(Equal(int64(1000)))
@@ -748,8 +774,10 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					DocumentDBImage:  "documentdb-oss:1.0",
-					PostgresImage:    "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
+					Advanced: &dbpreview.AdvancedSpec{
+						DocumentDBImage: "documentdb-oss:1.0",
+						PostgresImage:   "ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie",
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 					},
@@ -772,8 +800,12 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			documentdb := &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
 					InstancesPerNode: 1,
-					DocumentDBImage:  "documentdb-oss:1.0",
-					PreloadLibraries: []string{"pg_documentdb"},
+					Advanced: &dbpreview.AdvancedSpec{
+						DocumentDBImage: "documentdb-oss:1.0",
+						Postgres: &dbpreview.PostgresSpec{
+							PreloadLibraries: []string{"pg_documentdb"},
+						},
+					},
 					Resource: dbpreview.Resource{
 						Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 					},
@@ -795,7 +827,9 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 		baseSpec := func() dbpreview.DocumentDBSpec {
 			return dbpreview.DocumentDBSpec{
 				InstancesPerNode: 1,
-				DocumentDBImage:  "documentdb-oss:1.0",
+				Advanced: &dbpreview.AdvancedSpec{
+					DocumentDBImage: "documentdb-oss:1.0",
+				},
 				Resource: dbpreview.Resource{
 					Storage: dbpreview.StorageConfiguration{PvcSize: "10Gi"},
 				},
@@ -807,7 +841,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			req.Name = "pull-secret-test"
 			req.Namespace = "default"
 			spec := baseSpec()
-			spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "acr-pull-secret"}}
+			spec.Advanced.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "acr-pull-secret"}}
 			documentdb := &dbpreview.DocumentDB{Spec: spec}
 
 			cluster := GetCnpgClusterSpec(req, documentdb, "documentdb-oss:1.0", "test-sa", "", true, log)
@@ -821,7 +855,7 @@ var _ = Describe("GetCnpgClusterSpec", func() {
 			req.Name = "pull-secret-test"
 			req.Namespace = "default"
 			spec := baseSpec()
-			spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			spec.Advanced.ImagePullSecrets = []corev1.LocalObjectReference{
 				{Name: "acr-postgres"},
 				{Name: "acr-gateway"},
 			}
@@ -914,8 +948,10 @@ func TestGetMaxStopDelayOrDefault(t *testing.T) {
 			name: "returns default when StopDelay is 0",
 			documentdb: &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
-					Timeouts: dbpreview.Timeouts{
-						StopDelay: 0,
+					Advanced: &dbpreview.AdvancedSpec{
+						Timeouts: &dbpreview.Timeouts{
+							StopDelay: 0,
+						},
 					},
 				},
 			},
@@ -925,8 +961,10 @@ func TestGetMaxStopDelayOrDefault(t *testing.T) {
 			name: "returns custom StopDelay when set",
 			documentdb: &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
-					Timeouts: dbpreview.Timeouts{
-						StopDelay: 60,
+					Advanced: &dbpreview.AdvancedSpec{
+						Timeouts: &dbpreview.Timeouts{
+							StopDelay: 60,
+						},
 					},
 				},
 			},
@@ -936,8 +974,10 @@ func TestGetMaxStopDelayOrDefault(t *testing.T) {
 			name: "returns max StopDelay",
 			documentdb: &dbpreview.DocumentDB{
 				Spec: dbpreview.DocumentDBSpec{
-					Timeouts: dbpreview.Timeouts{
-						StopDelay: 1800,
+					Advanced: &dbpreview.AdvancedSpec{
+						Timeouts: &dbpreview.Timeouts{
+							StopDelay: 1800,
+						},
 					},
 				},
 			},

@@ -35,23 +35,6 @@ type DocumentDBSpec struct {
 	// Individual image fields take precedence over this version.
 	DocumentDBVersion string `json:"documentDBVersion,omitempty"`
 
-	// DocumentDBImage is the container image to use for DocumentDB.
-	// Changing this is not recommended for most users.
-	// If not specified, defaults based on documentDBVersion or operator defaults.
-	DocumentDBImage string `json:"documentDBImage,omitempty"`
-
-	// GatewayImage is the container image to use for the DocumentDB Gateway sidecar.
-	// Changing this is not recommended for most users.
-	// If not specified, defaults to a version that matches the DocumentDB operator version.
-	GatewayImage string `json:"gatewayImage,omitempty"`
-
-	// PostgresImage is the container image to use for the PostgreSQL server.
-	// If not specified, defaults to the last stable PostgreSQL version compatible with DocumentDB.
-	// Must use trixie (Debian 13) base to match the extension's GLIBC requirements.
-	// +kubebuilder:default="ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie"
-	// +optional
-	PostgresImage string `json:"postgresImage,omitempty"`
-
 	// DocumentDbCredentialSecret is the name of the Kubernetes Secret containing credentials
 	// for the DocumentDB gateway (expects keys `username` and `password`). If omitted,
 	// a default secret name `documentdb-credentials` is used.
@@ -63,13 +46,6 @@ type DocumentDBSpec struct {
 	// ClusterReplication configures cross-cluster replication for DocumentDB.
 	ClusterReplication *ClusterReplication `json:"clusterReplication,omitempty"`
 
-	// SidecarInjectorPluginName is the name of the sidecar injector plugin to use.
-	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="sidecar injector plugin name cannot be changed after cluster creation"
-	SidecarInjectorPluginName string `json:"sidecarInjectorPluginName,omitempty"`
-
-	// WalReplicaPluginName is the name of the wal replica plugin to use.
-	WalReplicaPluginName string `json:"walReplicaPluginName,omitempty"`
-
 	// ExposeViaService configures how to expose DocumentDB via a Kubernetes service.
 	// This can be a LoadBalancer or ClusterIP service.
 	ExposeViaService ExposeViaService `json:"exposeViaService,omitempty"`
@@ -78,8 +54,6 @@ type DocumentDBSpec struct {
 	// This determines cloud-specific service annotations for LoadBalancer services
 	// +kubebuilder:validation:Enum=eks;aks;gke
 	Environment string `json:"environment,omitempty"`
-
-	Timeouts Timeouts `json:"timeouts,omitempty"`
 
 	// TLS configures certificate management for DocumentDB components.
 	TLS *TLSConfiguration `json:"tls,omitempty"`
@@ -132,28 +106,105 @@ type DocumentDBSpec struct {
 	// +optional
 	SchemaVersion string `json:"schemaVersion,omitempty"`
 
-	// Affinity/Anti-affinity rules for Pods (cnpg passthrough)
-	// +optional
-	Affinity cnpgv1.AffinityConfiguration `json:"affinity,omitempty"`
-
 	// Monitoring configures observability via an OTel Collector sidecar.
 	// +optional
 	Monitoring *MonitoringSpec `json:"monitoring,omitempty"`
 
-	// PostgresUID is the UID under which CloudNative-PG launches PostgreSQL inside
-	// the postgresImage container. Default behaviour (unset) uses the CNPG default
-	// for the chosen image. Set this when using a combined image whose postgres
-	// user has a non-default UID. Must be set together with PostgresGID.
+	// Advanced groups expert-mode and rarely-touched configuration. Leaving
+	// it unset is the supported path for typical users — the operator applies
+	// safe defaults for everything in this block.
+	//
+	// Knobs that belong here change deployment internals (custom container
+	// images, plugin names, pod scheduling, postgres process configuration)
+	// rather than user-facing functionality. Setting any of these fields
+	// implies you understand the trade-offs and have tested the resulting
+	// configuration.
 	// +optional
-	PostgresUID *int32 `json:"postgresUID,omitempty"`
+	Advanced *AdvancedSpec `json:"advanced,omitempty"`
+}
 
-	// PostgresGID is the GID under which CloudNative-PG launches PostgreSQL.
-	// See PostgresUID. Must be set together with PostgresUID.
+// AdvancedSpec groups expert-mode configuration. All fields are optional and
+// the operator applies safe defaults when this stanza is absent.
+type AdvancedSpec struct {
+	// DocumentDBImage is the container image to use for the DocumentDB
+	// extension. Changing this is not recommended for most users.
+	// Leaving this empty enables "combined-image mode": the operator skips
+	// mounting the extension via ImageVolume and assumes the chosen
+	// postgresImage already carries the extension and is configured to load
+	// it via shared_preload_libraries. Most users should leave this empty
+	// and rely on the operator's default extension image.
 	// +optional
-	PostgresGID *int32 `json:"postgresGID,omitempty"`
+	DocumentDBImage string `json:"documentDBImage,omitempty"`
 
-	// PreloadLibraries overrides the default shared_preload_libraries injected
-	// by the operator. When set, replaces the default
+	// GatewayImage is the container image to use for the DocumentDB Gateway
+	// sidecar. Changing this is not recommended for most users.
+	// If not specified, defaults to a version that matches the DocumentDB
+	// operator version.
+	// +optional
+	GatewayImage string `json:"gatewayImage,omitempty"`
+
+	// PostgresImage is the container image to use for the PostgreSQL server.
+	// If not specified, defaults to the last stable PostgreSQL version
+	// compatible with DocumentDB. Must use trixie (Debian 13) base to match
+	// the extension's GLIBC requirements.
+	// +kubebuilder:default="ghcr.io/cloudnative-pg/postgresql:18-minimal-trixie"
+	// +optional
+	PostgresImage string `json:"postgresImage,omitempty"`
+
+	// ImagePullSecrets is the list of references to secrets in the same
+	// namespace to use for pulling any of the images used by the DocumentDB
+	// cluster (postgresImage, gatewayImage, sidecar). Only the .name field
+	// is honoured, matching the standard Kubernetes
+	// corev1.LocalObjectReference contract. Equivalent to
+	// PodSpec.ImagePullSecrets — used when the configured images live in a
+	// private registry such as a token-protected ACR.
+	// +optional
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+
+	// SidecarInjectorPluginName is the name of the sidecar injector plugin
+	// to use. Immutable after cluster creation.
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="sidecar injector plugin name cannot be changed after cluster creation"
+	// +optional
+	SidecarInjectorPluginName string `json:"sidecarInjectorPluginName,omitempty"`
+
+	// WalReplicaPluginName is the name of the wal replica plugin to use.
+	// +optional
+	WalReplicaPluginName string `json:"walReplicaPluginName,omitempty"`
+
+	// Affinity/Anti-affinity rules for Pods (cnpg passthrough).
+	// +optional
+	Affinity *cnpgv1.AffinityConfiguration `json:"affinity,omitempty"`
+
+	// Timeouts groups operational tuning knobs for cluster lifecycle.
+	// +optional
+	Timeouts *Timeouts `json:"timeouts,omitempty"`
+
+	// Postgres groups runtime-configuration knobs for the postgres process
+	// inside the postgresImage container. Useful primarily for
+	// combined-image deployments that ship custom extensions or a non-default
+	// postgres user.
+	// +optional
+	Postgres *PostgresSpec `json:"postgres,omitempty"`
+}
+
+// PostgresSpec groups runtime-configuration knobs for the postgres process.
+// +kubebuilder:validation:XValidation:rule="(!has(self.uid) && !has(self.gid)) || (has(self.uid) && has(self.gid))",message="uid and gid must be set together"
+type PostgresSpec struct {
+	// UID is the UID under which CloudNative-PG launches PostgreSQL inside
+	// the postgresImage container. Default behaviour (unset) uses the CNPG
+	// default for the chosen image. Set this when using a combined image
+	// whose postgres user has a non-default UID. Must be set together with
+	// GID.
+	// +optional
+	UID *int32 `json:"uid,omitempty"`
+
+	// GID is the GID under which CloudNative-PG launches PostgreSQL.
+	// See UID. Must be set together with UID.
+	// +optional
+	GID *int32 `json:"gid,omitempty"`
+
+	// PreloadLibraries overrides the default shared_preload_libraries
+	// injected by the operator. When set, replaces the default
 	// ["pg_cron", "pg_documentdb_core", "pg_documentdb"] list. Useful for
 	// combined-image deployments where extensions are pre-baked and
 	// shared_preload_libraries is configured by the image itself.
@@ -166,15 +217,6 @@ type DocumentDBSpec struct {
 	// combined-image deployments that ship a different extension set.
 	// +optional
 	PostInitSQL []string `json:"postInitSQL,omitempty"`
-
-	// ImagePullSecrets is the list of references to secrets in the same namespace
-	// to use for pulling any of the images used by the DocumentDB cluster
-	// (postgresImage, gatewayImage, sidecar). Only the .name field is honoured,
-	// matching the standard Kubernetes corev1.LocalObjectReference contract.
-	// Equivalent to PodSpec.ImagePullSecrets — used when the configured images
-	// live in a private registry such as a token-protected ACR.
-	// +optional
-	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 }
 
 // BootstrapConfiguration defines how to bootstrap a DocumentDB cluster.

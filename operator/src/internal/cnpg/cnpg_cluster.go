@@ -24,20 +24,37 @@ import (
 // isCombinedImageMode returns true when the DocumentDB CR opts into the
 // combined-image path (single OCI image carrying both postgres binaries and
 // extensions, no separate ImageVolume mount). Triggered by leaving
-// spec.documentDBImage unset/empty.
+// spec.advanced.documentDBImage unset/empty. A nil advanced stanza also
+// counts as "unset", which preserves the pre-refactor default behaviour.
 func isCombinedImageMode(documentdb *dbpreview.DocumentDB) bool {
-	return strings.TrimSpace(documentdb.Spec.DocumentDBImage) == ""
+	if documentdb.Spec.Advanced == nil {
+		return true
+	}
+	return strings.TrimSpace(documentdb.Spec.Advanced.DocumentDBImage) == ""
 }
 
 func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, documentdbImage, serviceAccountName, storageClass string, isPrimaryRegion bool, log logr.Logger) *cnpgv1.Cluster {
-	sidecarPluginName := documentdb.Spec.SidecarInjectorPluginName
+	adv := documentdb.Spec.Advanced
+	var postgres *dbpreview.PostgresSpec
+	if adv != nil {
+		postgres = adv.Postgres
+	}
+
+	sidecarPluginName := ""
+	if adv != nil {
+		sidecarPluginName = adv.SidecarInjectorPluginName
+	}
 	if sidecarPluginName == "" {
 		sidecarPluginName = util.DEFAULT_SIDECAR_INJECTOR_PLUGIN
 	}
 
 	// Get the gateway image for this DocumentDB instance
 	gatewayImage := util.GetGatewayImageForDocumentDB(documentdb)
-	log.Info("Creating CNPG cluster with gateway image", "gatewayImage", gatewayImage, "documentdbName", documentdb.Name, "specGatewayImage", documentdb.Spec.GatewayImage)
+	specGatewayImage := ""
+	if adv != nil {
+		specGatewayImage = adv.GatewayImage
+	}
+	log.Info("Creating CNPG cluster with gateway image", "gatewayImage", gatewayImage, "documentdbName", documentdb.Name, "specGatewayImage", specGatewayImage)
 
 	credentialSecretName := documentdb.Spec.DocumentDbCredentialSecret
 	if credentialSecretName == "" {
@@ -52,7 +69,7 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 
 	combinedImage := isCombinedImageMode(documentdb)
 	if combinedImage {
-		log.Info("Combined-image mode enabled (spec.documentDBImage empty); skipping ImageVolume extensions plumbing", "documentdbName", documentdb.Name)
+		log.Info("Combined-image mode enabled (spec.advanced.documentDBImage empty); skipping ImageVolume extensions plumbing", "documentdbName", documentdb.Name)
 	}
 
 	// Set ImageVolumeSource.PullPolicy for the extension image when configured.
@@ -81,8 +98,13 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 		},
 		Spec: func() cnpgv1.ClusterSpec {
 			spec := cnpgv1.ClusterSpec{
-				Instances:           documentdb.Spec.InstancesPerNode,
-				ImageName:           documentdb.Spec.PostgresImage,
+				Instances: documentdb.Spec.InstancesPerNode,
+				ImageName: func() string {
+					if adv != nil {
+						return adv.PostgresImage
+					}
+					return ""
+				}(),
 				PrimaryUpdateMethod: cnpgv1.PrimaryUpdateMethodSwitchover,
 				StorageConfiguration: cnpgv1.StorageConfiguration{
 					StorageClass: storageClassPointer, // Use configured storage class or default
@@ -134,18 +156,25 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 					},
 					Target: cnpgv1.BackupTarget("primary"),
 				},
-				Affinity: documentdb.Spec.Affinity,
+				Affinity: func() cnpgv1.AffinityConfiguration {
+					if adv != nil && adv.Affinity != nil {
+						return *adv.Affinity
+					}
+					return cnpgv1.AffinityConfiguration{}
+				}(),
 			}
 			spec.MaxStopDelay = getMaxStopDelayOrDefault(documentdb)
 
 			// Combined-image mode: honour optional UID/GID overrides for the
-			// in-image postgres user (e.g., the emulator image runs as uid 1000).
+			// in-image postgres user (e.g., a custom image runs as uid 1000).
 			// Pointer types let us distinguish "unset" from "explicitly 0".
-			if documentdb.Spec.PostgresUID != nil {
-				spec.PostgresUID = int64(*documentdb.Spec.PostgresUID)
-			}
-			if documentdb.Spec.PostgresGID != nil {
-				spec.PostgresGID = int64(*documentdb.Spec.PostgresGID)
+			if postgres != nil {
+				if postgres.UID != nil {
+					spec.PostgresUID = int64(*postgres.UID)
+				}
+				if postgres.GID != nil {
+					spec.PostgresGID = int64(*postgres.GID)
+				}
 			}
 
 			// Plumb image pull secrets through to CNPG so they apply to the
@@ -154,9 +183,9 @@ func GetCnpgClusterSpec(req ctrl.Request, documentdb *dbpreview.DocumentDB, docu
 			// CNPG's LocalObjectReference is a structural alias of
 			// corev1.LocalObjectReference (single .Name field), so we translate
 			// element-by-element rather than coercing types.
-			if len(documentdb.Spec.ImagePullSecrets) > 0 {
-				spec.ImagePullSecrets = make([]cnpgv1.LocalObjectReference, 0, len(documentdb.Spec.ImagePullSecrets))
-				for _, ref := range documentdb.Spec.ImagePullSecrets {
+			if adv != nil && len(adv.ImagePullSecrets) > 0 {
+				spec.ImagePullSecrets = make([]cnpgv1.LocalObjectReference, 0, len(adv.ImagePullSecrets))
+				for _, ref := range adv.ImagePullSecrets {
 					spec.ImagePullSecrets = append(spec.ImagePullSecrets, cnpgv1.LocalObjectReference{Name: ref.Name})
 				}
 			}
@@ -182,20 +211,25 @@ func buildPostgresConfiguration(documentdb *dbpreview.DocumentDB, extensionImage
 		"host replication all all trust",
 	}
 
+	var preloadLibraries []string
+	if documentdb.Spec.Advanced != nil && documentdb.Spec.Advanced.Postgres != nil {
+		preloadLibraries = documentdb.Spec.Advanced.Postgres.PreloadLibraries
+	}
+
 	if combinedImage {
 		// Combined-image mode: skip the ImageVolume extension mount and the
 		// documentdb-extension-specific GUC parameters. Honour an explicit
 		// preloadLibraries override if provided; otherwise leave nil so the
 		// image's own shared_preload_libraries setting is authoritative.
 		return cnpgv1.PostgresConfiguration{
-			AdditionalLibraries: documentdb.Spec.PreloadLibraries,
+			AdditionalLibraries: preloadLibraries,
 			PgHBA:               pgHBA,
 		}
 	}
 
 	// Default (ImageVolume) mode: preserve byte-identical output to the
 	// pre-combined-image-mode behaviour.
-	additionalLibraries := documentdb.Spec.PreloadLibraries
+	additionalLibraries := preloadLibraries
 	if additionalLibraries == nil {
 		additionalLibraries = []string{"pg_cron", "pg_documentdb_core", "pg_documentdb"}
 	}
@@ -283,8 +317,8 @@ func getDefaultBootstrapConfiguration(documentdb *dbpreview.DocumentDB) *cnpgv1.
 		"CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'",
 		"ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS",
 	}
-	if documentdb != nil && len(documentdb.Spec.PostInitSQL) > 0 {
-		postInitSQL = documentdb.Spec.PostInitSQL
+	if documentdb != nil && documentdb.Spec.Advanced != nil && documentdb.Spec.Advanced.Postgres != nil && len(documentdb.Spec.Advanced.Postgres.PostInitSQL) > 0 {
+		postInitSQL = documentdb.Spec.Advanced.Postgres.PostInitSQL
 	}
 
 	return &cnpgv1.BootstrapConfiguration{
@@ -296,8 +330,8 @@ func getDefaultBootstrapConfiguration(documentdb *dbpreview.DocumentDB) *cnpgv1.
 
 // getMaxStopDelayOrDefault returns StopDelay if set, otherwise util.CNPG_DEFAULT_STOP_DELAY
 func getMaxStopDelayOrDefault(documentdb *dbpreview.DocumentDB) int32 {
-	if documentdb.Spec.Timeouts.StopDelay != 0 {
-		return documentdb.Spec.Timeouts.StopDelay
+	if documentdb.Spec.Advanced != nil && documentdb.Spec.Advanced.Timeouts != nil && documentdb.Spec.Advanced.Timeouts.StopDelay != 0 {
+		return documentdb.Spec.Advanced.Timeouts.StopDelay
 	}
 	return util.CNPG_DEFAULT_STOP_DELAY
 }

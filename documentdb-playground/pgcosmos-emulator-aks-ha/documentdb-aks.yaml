@@ -45,31 +45,6 @@ metadata:
   name: pgcosmos-emulator
   namespace: pgcosmos-emulator
 spec:
-  # >>> REPLACE ${ACR_LOGIN_SERVER} BEFORE APPLYING <<<
-  # run_demo.sh does the substitution via envsubst; if you apply this
-  # manifest by hand, fill in the registry login server (e.g.
-  # mypgcosmosacr.azurecr.io) printed by acr-setup.sh.
-  postgresImage: ${ACR_LOGIN_SERVER}/pgcosmos-emulator:16.12
-  gatewayImage:  ${ACR_LOGIN_SERVER}/pgcosmos-emulator:dev
-  imagePullSecrets:
-    - name: pgcosmos-acr-pull
-  postgresUID: 1000
-  postgresGID: 1000
-  preloadLibraries:
-    - citus
-    - rum
-    - helio_gin
-    - pg_cron
-    - pgcosmos
-  postInitSQL:
-    - "CREATE EXTENSION IF NOT EXISTS citus"
-    - "CREATE EXTENSION IF NOT EXISTS pg_cron"
-    - "CREATE EXTENSION IF NOT EXISTS rum"
-    - "CREATE EXTENSION IF NOT EXISTS helio_gin"
-    - "CREATE EXTENSION IF NOT EXISTS postgis"
-    - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
-    - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
-    - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"
   nodeCount: 1
   instancesPerNode: 2
   resource:
@@ -86,3 +61,30 @@ spec:
   tls:
     gateway:
       mode: SelfSigned
+  advanced:
+    # >>> REPLACE ${ACR_LOGIN_SERVER} BEFORE APPLYING <<<
+    # run_demo.sh does the substitution via envsubst; if you apply this
+    # manifest by hand, fill in the registry login server (e.g.
+    # mypgcosmosacr.azurecr.io) printed by acr-setup.sh.
+    postgresImage: ${ACR_LOGIN_SERVER}/pgcosmos-emulator:16.12
+    gatewayImage:  ${ACR_LOGIN_SERVER}/pgcosmos-emulator:dev
+    imagePullSecrets:
+      - name: pgcosmos-acr-pull
+    postgres:
+      uid: 1000
+      gid: 1000
+      preloadLibraries:
+        - citus
+        - rum
+        - helio_gin
+        - pg_cron
+        - pgcosmos
+      postInitSQL:
+        - "CREATE EXTENSION IF NOT EXISTS citus"
+        - "CREATE EXTENSION IF NOT EXISTS pg_cron"
+        - "CREATE EXTENSION IF NOT EXISTS rum"
+        - "CREATE EXTENSION IF NOT EXISTS helio_gin"
+        - "CREATE EXTENSION IF NOT EXISTS postgis"
+        - "CREATE EXTENSION IF NOT EXISTS pgcosmos CASCADE"
+        - "CREATE ROLE documentdb WITH LOGIN PASSWORD 'Admin100'"
+        - "ALTER ROLE documentdb WITH SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS"

@@ -6,7 +6,7 @@
 #                          handed back to the operator on stdout
 #   * aks-pull token     — content/read on the same repository, materialised
 #                          as a docker-registry secret in the demo namespace
-#                          so the DocumentDB CR's spec.imagePullSecrets can
+#                          so the DocumentDB CR's spec.advanced.imagePullSecrets can
 #                          reference it
 #
 # Anonymous pull stays disabled, so the wrapper image is invisible to the

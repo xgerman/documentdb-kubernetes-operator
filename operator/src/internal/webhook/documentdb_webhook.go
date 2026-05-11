@@ -181,7 +181,7 @@ func (v *DocumentDBValidator) validateImageRollback(newDB, oldDB *dbpreview.Docu
 	// where the image tag may not represent the extension version (e.g., CI tags
 	// like "0.2.0-test-12345" where 0.2.0 is the chart version, not the extension).
 	if newDB.Spec.DocumentDBVersion == oldDB.Spec.DocumentDBVersion &&
-		newDB.Spec.DocumentDBImage == oldDB.Spec.DocumentDBImage {
+		advancedDocumentDBImage(newDB) == advancedDocumentDBImage(oldDB) {
 		return nil
 	}
 
@@ -296,8 +296,7 @@ func isBootstrapEqual(a, b *dbpreview.BootstrapConfiguration) bool {
 // Digest-only references (e.g., "image@sha256:...") are not parseable as versions
 // and return "".
 func resolveBinaryVersion(db *dbpreview.DocumentDB) string {
-	if db.Spec.DocumentDBImage != "" {
-		ref := db.Spec.DocumentDBImage
+	if ref := advancedDocumentDBImage(db); ref != "" {
 		// Ignore digest-only references — they don't carry a version tag
 		if strings.Contains(ref, "@sha256:") {
 			return db.Spec.DocumentDBVersion
@@ -311,6 +310,15 @@ func resolveBinaryVersion(db *dbpreview.DocumentDB) string {
 		}
 	}
 	return db.Spec.DocumentDBVersion
+}
+
+// advancedDocumentDBImage returns spec.advanced.documentDBImage, treating a
+// nil advanced stanza as the empty string.
+func advancedDocumentDBImage(db *dbpreview.DocumentDB) string {
+	if db == nil || db.Spec.Advanced == nil {
+		return ""
+	}
+	return db.Spec.Advanced.DocumentDBImage
 }
 
 // extractSemver returns the leading "X.Y.Z" portion from a tag string,
