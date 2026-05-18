@@ -249,7 +249,7 @@ type BootstrapConfiguration struct {
 }
 
 // RecoveryConfiguration defines recovery settings for bootstrapping a DocumentDB cluster.
-// +kubebuilder:validation:XValidation:rule="!(has(self.backup) && self.backup.name != ” && has(self.persistentVolume) && self.persistentVolume.name != ”)",message="cannot specify both backup and persistentVolume recovery at the same time"
+// +kubebuilder:validation:XValidation:rule="!(has(self.backup) && size(self.backup.name) > 0 && has(self.persistentVolume) && size(self.persistentVolume.name) > 0)",message="cannot specify both backup and persistentVolume recovery at the same time"
 type RecoveryConfiguration struct {
 	// Backup specifies the source backup to restore from.
 	// +optional
