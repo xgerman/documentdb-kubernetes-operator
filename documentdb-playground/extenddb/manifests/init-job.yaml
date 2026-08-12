@@ -1,0 +1,47 @@
+# One-shot init Job: runs `extenddb init --backend mongodb`, which creates
+# the extenddb_catalog/extenddb_data databases inside DocumentDB, generates
+# a self-signed TLS cert, generates extenddb.toml, and prints admin
+# credentials to its logs (shown once -- scripts/deploy.sh captures them).
+#
+# Must complete (and its pod be gone or at least done writing to the PVC)
+# before manifests/serve.yaml is applied, since both mount the same
+# ReadWriteOnce PVC. scripts/deploy.sh enforces this ordering.
+#
+# Templated by scripts/deploy.sh with envsubst: ${EXTENDDB_NAMESPACE},
+# ${EXTENDDB_IMAGE}.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: extenddb-init
+  namespace: ${EXTENDDB_NAMESPACE}
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: extenddb-init
+          image: ${EXTENDDB_IMAGE}
+          command:
+            - extenddb
+            - init
+            - --backend
+            - mongodb
+            - --config
+            - /var/lib/extenddb/extenddb.toml
+            - --bind-addr
+            - "0.0.0.0"
+          env:
+            - name: EXTENDDB__STORAGE__MONGODB__CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: extenddb-mongo-uri
+                  key: connection_string
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/extenddb
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: extenddb-state
