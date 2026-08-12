@@ -33,7 +33,7 @@ RUN cargo build --release --no-default-features --features mongodb
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates \
+        ca-certificates libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 extenddb \
     && useradd -u 10001 -g extenddb -m -d /home/extenddb -s /usr/sbin/nologin extenddb

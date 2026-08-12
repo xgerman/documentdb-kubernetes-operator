@@ -11,6 +11,26 @@ while the data actually lives in DocumentDB.
 > trademark of Amazon.com, Inc. This playground is not affiliated with or
 > endorsed by AWS.
 
+> [!WARNING]
+> **Known blocking limitation (confirmed by live testing, 2026-08-12):**
+> ExtendDB's MongoDB backend (v0.1.3) unconditionally uses MongoDB's
+> `snapshot` read concern for its transactional write paths (`CreateTable`,
+> `PutItem`, and others — see `crates/storage-mongodb/src/data_engine.rs`
+> upstream). This operator's DocumentDB gateway (tested at extension
+> v0.110.0) does not support the `snapshot` read concern and rejects it with
+> `Error code 115 (CommandNotSupported): 'Snapshot' read concern is not
+> supported`. In practice: `CreateTable` succeeds and the table reaches
+> `ACTIVE` status, but `PutItem` (and by extension most other data-plane
+> operations) currently fails with `InternalServerError`. This is an
+> upstream compatibility gap between the two projects, not a playground
+> configuration issue — there is no ExtendDB config flag to change the read
+> concern it uses, and no DocumentDB gateway setting to add snapshot-read-
+> concern support. Deploy this playground to learn the wiring and observe
+> the failure mode; do not rely on it for working DynamoDB data operations
+> until one side addresses the gap. Track upstream:
+> [ExtendDB issues](https://github.com/ExtendDB/extenddb/issues) and
+> [documentdb/documentdb issues](https://github.com/documentdb/documentdb/issues).
+
 ## Architecture
 
 ```
@@ -63,15 +83,20 @@ kubectl wait --for=jsonpath='{.status.status}'="Cluster in healthy state" \
 
 # 3. Deploy ExtendDB, wired up to the DocumentDB instance
 ./scripts/deploy.sh
-# Save the admin access key ID/secret printed at the end of this step --
-# they are shown once and cannot be retrieved later.
+# Save the printed admin username/password -- shown once, cannot be
+# retrieved later. NOTE: these are management-API credentials, not a SigV4
+# access key/secret pair -- see "Creating a DynamoDB API access key" below
+# for the one-time step to turn them into one.
 
-# 4. Test the DynamoDB API end to end
-EXTENDDB_ACCESS_KEY_ID=<from step 3> \
-EXTENDDB_SECRET_ACCESS_KEY=<from step 3> \
+# 4. Create an account, IAM user, policy, and access key for DynamoDB calls
+#    (see "Creating a DynamoDB API access key" below for the full walkthrough)
+
+# 5. Test the DynamoDB API end to end
+EXTENDDB_ACCESS_KEY_ID=<access key from step 4> \
+EXTENDDB_SECRET_ACCESS_KEY=<secret key from step 4> \
     ./scripts/test-connection.sh
 
-# 5. (Optional) Run the small Python demo, or explore interactively with ddbsh
+# 6. (Optional) Run the small Python demo, or explore interactively with ddbsh
 kubectl port-forward svc/extenddb 18443:18443 -n extenddb &
 pip install -r demo/requirements.txt
 EXTENDDB_ACCESS_KEY_ID=<from step 3> \
@@ -90,6 +115,57 @@ Override via env vars if your cluster uses different names:
 DOCUMENTDB_NAMESPACE=my-ns DOCUMENTDB_CLUSTER=my-cluster EXTENDDB_NAMESPACE=dynamo \
     ./scripts/deploy.sh
 ```
+
+## Creating a DynamoDB API access key
+
+The username/password `extenddb init` prints are for the **management API**
+(`extenddb manage`) only — they authenticate account/user/policy
+administration, not DynamoDB requests, which use AWS SigV4 access
+key/secret pairs instead. Create an account, an IAM user, a policy granting
+DynamoDB access, and an access key with `extenddb manage` (run inside the
+running pod, which already has the binary and config):
+
+```bash
+ADMIN_USER=admin
+ADMIN_PASS=<password from 'extenddb init', printed by scripts/deploy.sh>
+
+# Create an account
+kubectl exec -n extenddb deploy/extenddb -- extenddb manage \
+    --user "$ADMIN_USER" --password "$ADMIN_PASS" \
+    --config /var/lib/extenddb/extenddb.toml \
+    create-account --account-name playground-demo
+# -> note the returned account_id, e.g. 676578798544
+
+ACCOUNT_ID=<account_id from above>
+
+# Create an IAM user with a console password
+kubectl exec -n extenddb deploy/extenddb -- extenddb manage \
+    --user "$ADMIN_USER" --password "$ADMIN_PASS" \
+    --config /var/lib/extenddb/extenddb.toml \
+    create-user --account-id "$ACCOUNT_ID" \
+    --user-name demo-user --user-password <choose-a-password>
+
+# Attach a policy granting full DynamoDB access
+kubectl exec -n extenddb deploy/extenddb -- extenddb manage \
+    --user "$ADMIN_USER" --password "$ADMIN_PASS" \
+    --config /var/lib/extenddb/extenddb.toml \
+    put-user-policy --account-id "$ACCOUNT_ID" --user-name demo-user \
+    --policy-name FullAccess \
+    --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"dynamodb:*","Resource":"*"}]}'
+
+# Create the access key -- shown once, save it now
+kubectl exec -n extenddb deploy/extenddb -- extenddb manage \
+    --user "$ACCOUNT_ID/demo-user" --password <the-password-you-chose> \
+    --config /var/lib/extenddb/extenddb.toml \
+    create-access-key
+```
+
+Use the returned `access_key_id`/`secret_access_key` as
+`EXTENDDB_ACCESS_KEY_ID`/`EXTENDDB_SECRET_ACCESS_KEY` for
+`scripts/test-connection.sh`, or as `AWS_ACCESS_KEY_ID`/
+`AWS_SECRET_ACCESS_KEY` for any AWS SDK/CLI call against the ExtendDB
+endpoint. See [`docs/getting-started.md` §7](https://github.com/ExtendDB/extenddb/blob/main/docs/getting-started.md)
+upstream for the full IAM user/group/role/policy management surface.
 
 ## What the Scripts Do
 
@@ -223,26 +299,57 @@ the generated certificate from the PVC (or the init Job's logs directory
 ### `replicaSet` vs. `directConnection`
 
 DocumentDB's printed connection string sets both `directConnection=true` and
-`replicaSet=rs0`. Several MongoDB drivers (e.g. the Go driver used by KEDA,
+`replicaSet=rs0`. Some MongoDB drivers (e.g. the Go driver used by KEDA,
 `pymongo` as used by the [LightRAG playground](../lightrag/)) fail when both
-are combined, because `directConnection` skips replica-set discovery, but the
-gateway doesn't advertise its replica-set name to a driver in direct mode —
+are combined, because the driver validates the gateway's advertised
+replica-set name against the requested one and rejects the mismatch —
 producing errors like *"client is configured to connect to a replica set
-named 'rs0' but this node belongs to a set named 'None'"*.
+named 'rs0' but this node belongs to a set named 'None'"*. Those playgrounds
+work around it by dropping `replicaSet=rs0`.
 
-ExtendDB's MongoDB backend, however, **requires** `replicaSet=rs0` in its
-connection string (its transactional and retryable-write code paths depend on
-replica-set semantics) — it cannot be dropped the way other playgrounds drop
-it. `scripts/deploy.sh` instead strips `directConnection=true` and keeps
-`replicaSet=rs0`, so the Rust `mongodb` driver performs full topology
-discovery against the gateway-advertised replica set. If you see connection
-or topology errors from the `extenddb-init` Job or the `extenddb` Deployment,
-check the resolved connection string in the `extenddb-mongo-uri` Secret first:
+ExtendDB's docs describe its MongoDB backend as **requiring** a replica set
+(even single-node deployments), which initially suggested `replicaSet=rs0`
+couldn't be dropped the way other playgrounds drop it. **This was tested
+empirically, twice, with different results** — the second, authoritative
+test is what `scripts/deploy.sh` implements:
+
+| Test                                                              | Connection string                                | Result |
+| ------------------------------------------------------------------ | --------------------------------------------------- | -------- |
+| `mongosh` (Node.js driver) against the DocumentDB gateway directly | `directConnection=true` **and** `replicaSet=rs0`     | ✅ Succeeds |
+| `mongosh` against the gateway                                       | `replicaSet=rs0` alone (no `directConnection`)      | ❌ Fails — 30s server selection timeout |
+| **Real `extenddb init --backend mongodb` binary** (Rust `mongodb` v3 driver) against the gateway | `directConnection=true` **and** `replicaSet=rs0` | ❌ **Fails** — `Connection string replicaSet name "rs0" does not match actual name <none>` |
+| **Real `extenddb init --backend mongodb` binary**                  | `directConnection=true`, **no** `replicaSet`         | ✅ **Succeeds** |
+
+The gateway identifies itself via `hello`/`isMaster` as `isdbgrid` (mongos-
+style) with no `setName` field at all. mongosh's driver skips validating a
+requested `replicaSet` against the (nonexistent) advertised one once
+`directConnection=true` is set — but the Rust `mongodb` v3 driver ExtendDB
+actually links does **not** skip that validation, and rejects the mismatch
+outright even in direct-connection mode. The mongosh result was a false
+positive for this specific driver/version combination — the real ExtendDB
+binary is the authoritative test.
+
+So, same as the lightrag and keda-autoscaling playgrounds in this repo (and
+for the same underlying reason), `scripts/deploy.sh` strips `replicaSet=rs0`
+from the connection string before handing it to ExtendDB. This has not
+prevented ExtendDB from using MongoDB transactions against DocumentDB in
+testing — DocumentDB's gateway appears to support the driver's transaction
+commands regardless of what replica-set name (if any) the client requested.
+If you still see connection or topology errors from the `extenddb-init` Job
+or the `extenddb` Deployment, check the resolved connection string in the
+`extenddb-mongo-uri` Secret first:
 
 ```bash
 kubectl get secret extenddb-mongo-uri -n extenddb \
     -o jsonpath='{.data.connection_string}' | base64 -d
 ```
+
+DocumentDB's gateway also uses a self-signed TLS certificate by default,
+which the Rust `mongodb` driver's default verifier rejects with `invalid
+peer certificate: UnknownIssuer`; `scripts/deploy.sh` appends
+`tlsAllowInvalidCertificates=true` to the connection string to work around
+this (playground/demo only — see [`../tls/`](../tls/) for production-grade
+TLS trust setups).
 
 ### Init Job fails or admin credentials were lost
 
@@ -262,6 +369,31 @@ ExtendDB's MongoDB backend uses multi-document transactions for some
 operations (e.g. `TransactWriteItems`). Confirm your DocumentDB extension
 version supports the MongoDB transaction commands ExtendDB issues; check
 `kubectl logs deploy/extenddb -n extenddb` for the underlying MongoDB error.
+
+### Pod is "Ready" but requests still fail
+
+`extenddb healthcheck` (used for both probes) checks that the process/
+listener is up; it does not necessarily verify DocumentDB connectivity was
+established successfully after startup. Treat a Ready pod as necessary but
+not sufficient — run `scripts/test-connection.sh` as the real functional
+check, and check `kubectl logs deploy/extenddb -n extenddb` for MongoDB
+connection errors if it fails.
+
+### `Multi-Attach error for volume` on multi-node clusters
+
+The init Job and serve Deployment share one ReadWriteOnce PVC and are
+applied sequentially by `deploy.sh` to avoid this, but on a multi-node
+cluster the completed init Job's pod can briefly hold the volume attached to
+its node after `Complete`, causing the Deployment's pod to fail scheduling
+on a different node. The Job sets `ttlSecondsAfterFinished: 120` so it's
+cleaned up automatically, but if you hit this, delete the finished Job pod
+manually and let the Deployment retry:
+
+```bash
+kubectl delete pod -n extenddb -l job-name=extenddb-init
+```
+
+This is not an issue on single-node kind clusters.
 
 ## Cleanup
 

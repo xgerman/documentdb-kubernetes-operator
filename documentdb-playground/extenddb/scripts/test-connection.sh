@@ -3,10 +3,21 @@
 # CreateTable/PutItem/GetItem/DeleteTable through the AWS CLI to confirm the
 # DynamoDB API round-trips through ExtendDB into DocumentDB.
 #
-# Requires the admin access key/secret printed by scripts/deploy.sh (from the
-# extenddb-init Job logs). Pass them via EXTENDDB_ACCESS_KEY_ID /
-# EXTENDDB_SECRET_ACCESS_KEY, or export them as AWS_ACCESS_KEY_ID /
-# AWS_SECRET_ACCESS_KEY yourself before running this script.
+# Requires a SigV4 access key/secret pair -- NOT the admin username/password
+# printed by scripts/deploy.sh, which authenticates the management API only.
+# See ../README.md's "Creating a DynamoDB API access key" section for the
+# extenddb manage create-account/create-user/put-user-policy/
+# create-access-key steps needed to obtain one. Pass the resulting keys via
+# EXTENDDB_ACCESS_KEY_ID / EXTENDDB_SECRET_ACCESS_KEY, or export them as
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY yourself before running this
+# script.
+#
+# KNOWN LIMITATION (see README warning banner): CreateTable succeeds, but
+# PutItem and most other data-plane operations currently fail with
+# InternalServerError, because ExtendDB's MongoDB backend unconditionally
+# uses MongoDB's `snapshot` read concern, which this operator's DocumentDB
+# gateway does not support. This is an upstream compatibility gap, not a
+# bug in this script.
 set -euo pipefail
 
 command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 1; }

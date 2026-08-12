@@ -9,17 +9,30 @@ Usage:
 
 Environment variables:
     EXTENDDB_ENDPOINT            default: https://127.0.0.1:18443
-    EXTENDDB_ACCESS_KEY_ID        required (from `extenddb init`, printed by
-                                  ../scripts/deploy.sh)
-    EXTENDDB_SECRET_ACCESS_KEY    required
+    EXTENDDB_ACCESS_KEY_ID        required -- a SigV4 access key, NOT the
+                                  admin username/password `extenddb init`
+                                  prints (that's for the management API
+                                  only). See ../README.md's "Creating a
+                                  DynamoDB API access key" section for the
+                                  extenddb manage steps to create one.
+    EXTENDDB_SECRET_ACCESS_KEY    required (secret half of the key above)
     AWS_DEFAULT_REGION            default: us-east-1
 
 ExtendDB uses a self-signed TLS certificate by default; this demo disables
 certificate verification for simplicity (fine for a local playground, not
 for anything you'd point at a real deployment).
+
+KNOWN LIMITATION (see README warning banner): as of this writing,
+CreateTable succeeds but PutItem/BatchWriteItem and most other data-plane
+operations fail with an internal server error, because ExtendDB's MongoDB
+backend unconditionally requests MongoDB's `snapshot` read concern, which
+this operator's DocumentDB gateway does not support. This demo will likely
+fail partway through until that upstream gap is closed.
 """
+
 import os
 import sys
+from decimal import Decimal
 
 import boto3
 import urllib3
@@ -33,9 +46,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 TABLE_NAME = "Movies"
 
 MOVIES = [
-    {"year": 2013, "title": "Rush", "info": {"rating": 8.1, "genres": ["Action", "Biography", "Drama"]}},
-    {"year": 2013, "title": "Prisoners", "info": {"rating": 8.2, "genres": ["Crime", "Drama", "Mystery"]}},
-    {"year": 2014, "title": "Interstellar", "info": {"rating": 8.6, "genres": ["Adventure", "Drama", "Sci-Fi"]}},
+    {"year": 2013, "title": "Rush", "info": {"rating": Decimal("8.1"), "genres": ["Action", "Biography", "Drama"]}},
+    {"year": 2013, "title": "Prisoners", "info": {"rating": Decimal("8.2"), "genres": ["Crime", "Drama", "Mystery"]}},
+    {"year": 2014, "title": "Interstellar", "info": {"rating": Decimal("8.6"), "genres": ["Adventure", "Drama", "Sci-Fi"]}},
 ]
 
 
@@ -138,7 +151,7 @@ def main():
 
     get_movie(table, 2014, "Interstellar")
     query_by_year(table, 2013)
-    update_rating(table, 2013, "Rush", 8.3)
+    update_rating(table, 2013, "Rush", Decimal("8.3"))
     get_movie(table, 2013, "Rush")
     scan_all(table)
     delete_movie(table, 2013, "Prisoners")

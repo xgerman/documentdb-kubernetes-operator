@@ -21,6 +21,13 @@ spec:
       labels:
         app: extenddb
     spec:
+      # The image runs as non-root UID/GID 10001; fsGroup ensures the
+      # mounted PVC is group-writable for that UID regardless of the CSI
+      # driver's default mount ownership.
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
         - name: extenddb
           image: ${EXTENDDB_IMAGE}
@@ -39,9 +46,22 @@ spec:
                 secretKeyRef:
                   name: extenddb-mongo-uri
                   key: connection_string
+            # Must match the init Job's HOME so `~/.extenddb/tls/cert.pem`
+            # (referenced by the generated extenddb.toml's cert_path/key_path)
+            # resolves to the same PVC-backed location the cert was written
+            # to during init -- see manifests/init-job.yaml.
+            - name: HOME
+              value: /var/lib/extenddb
           volumeMounts:
             - name: state
               mountPath: /var/lib/extenddb
+          # NOTE: `extenddb healthcheck` verifies the process/listener is up
+          # but (per upstream docs, for the PostgreSQL backend at least) does
+          # not verify backend-store connectivity after startup. A "Ready"
+          # pod is necessary but not sufficient -- treat scripts/test-
+          # connection.sh as the actual functional gate, not just pod
+          # readiness. Both probes intentionally share this command since no
+          # finer-grained check is exposed by the binary today.
           readinessProbe:
             exec:
               command: ["extenddb", "healthcheck"]
