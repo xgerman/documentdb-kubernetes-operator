@@ -22,12 +22,8 @@ ExtendDB uses a self-signed TLS certificate by default; this demo disables
 certificate verification for simplicity (fine for a local playground, not
 for anything you'd point at a real deployment).
 
-KNOWN LIMITATION (see README warning banner): as of this writing,
-CreateTable succeeds but PutItem/BatchWriteItem and most other data-plane
-operations fail with an internal server error, because ExtendDB's MongoDB
-backend unconditionally requests MongoDB's `snapshot` read concern, which
-this operator's DocumentDB gateway does not support. This demo will likely
-fail partway through until that upstream gap is closed.
+The playground Deployment configures majority transaction read concern for
+DocumentDB compatibility; see ../README.md for the isolation tradeoff.
 """
 
 import os

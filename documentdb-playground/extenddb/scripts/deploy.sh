@@ -39,10 +39,22 @@ if [ -z "$RAW_CONN" ]; then
     exit 1
 fi
 
-# The operator embeds $(kubectl get secret ...) substitutions in the printed
-# connection string; resolve them. This trusts the operator-supplied field --
-# do not point this script at an untrusted DocumentDB resource.
-MONGO_URI=$(eval "echo \"$RAW_CONN\"")
+# The operator embeds shell substitutions for the credentials in the printed
+# connection string. Resolve the credentials directly instead of eval: a
+# password containing shell metacharacters (for example '!') must remain
+# literal and must never be interpreted by a shell.
+DOCDB_USER=$(kubectl get secret docdb-credentials -n "$DOCUMENTDB_NAMESPACE" \
+    -o jsonpath='{.data.username}' | base64 -d)
+DOCDB_PASSWORD=$(kubectl get secret docdb-credentials -n "$DOCUMENTDB_NAMESPACE" \
+    -o jsonpath='{.data.password}' | base64 -d)
+case "$RAW_CONN" in
+    mongodb://*@*) ;;
+    *)
+        echo "DocumentDB status.connectionString has an unexpected format" >&2
+        exit 1
+        ;;
+esac
+MONGO_URI="mongodb://${DOCDB_USER}:${DOCDB_PASSWORD}@${RAW_CONN#*@}"
 
 # Swap the ClusterIP for the in-cluster DNS name so the URI keeps working
 # after the DocumentDB service's IP changes.

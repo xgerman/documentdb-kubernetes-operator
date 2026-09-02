@@ -11,25 +11,14 @@ while the data actually lives in DocumentDB.
 > trademark of Amazon.com, Inc. This playground is not affiliated with or
 > endorsed by AWS.
 
-> [!WARNING]
-> **Known blocking limitation (confirmed by live testing, 2026-08-12):**
-> ExtendDB's MongoDB backend (v0.1.3) unconditionally uses MongoDB's
-> `snapshot` read concern for its transactional write paths (`CreateTable`,
-> `PutItem`, and others — see `crates/storage-mongodb/src/data_engine.rs`
-> upstream). This operator's DocumentDB gateway (tested at extension
-> v0.110.0) does not support the `snapshot` read concern and rejects it with
-> `Error code 115 (CommandNotSupported): 'Snapshot' read concern is not
-> supported`. In practice: `CreateTable` succeeds and the table reaches
-> `ACTIVE` status, but `PutItem` (and by extension most other data-plane
-> operations) currently fails with `InternalServerError`. This is an
-> upstream compatibility gap between the two projects, not a playground
-> configuration issue — there is no ExtendDB config flag to change the read
-> concern it uses, and no DocumentDB gateway setting to add snapshot-read-
-> concern support. Deploy this playground to learn the wiring and observe
-> the failure mode; do not rely on it for working DynamoDB data operations
-> until one side addresses the gap. Track upstream:
-> [ExtendDB issues](https://github.com/ExtendDB/extenddb/issues) and
-> [documentdb/documentdb issues](https://github.com/documentdb/documentdb/issues).
+> [!NOTE]
+> **Transaction compatibility:** DocumentDB does not support MongoDB's
+> `snapshot` transaction read concern, so this playground configures
+> `storage.mongodb.transaction_read_concern` as `majority`. ExtendDB keeps
+> `snapshot` as the default for real MongoDB deployments. Using `majority`
+> enables DocumentDB compatibility, but concurrent transactions do not get
+> snapshot isolation and may observe a different view of data than they
+> would with `snapshot`.
 
 ## Architecture
 
@@ -171,10 +160,13 @@ upstream for the full IAM user/group/role/policy management surface.
 
 `scripts/build-image.sh`:
 
-1. Builds [`Dockerfile`](Dockerfile), which clones ExtendDB and compiles it
-   with `cargo build --release --no-default-features --features mongodb`
+1. Builds [`Dockerfile`](Dockerfile), using ExtendDB's `main` branch by
+   default and compiling it with
+   `cargo build --release --no-default-features --features mongodb`
    (ExtendDB's `postgres`/`mongodb`/`sqlite` backends are mutually exclusive
-   at compile time — a build enabling more than one is rejected).
+   at compile time — a build enabling more than one is rejected). Set
+   `EXTENDDB_REF` to build another remote ref, or `EXTENDDB_SOURCE_DIR` to
+   build an uncommitted local ExtendDB working tree.
 2. If a kind cluster is active in your current `kubectl` context, loads the
    image directly with `kind load docker-image` so no registry push is
    needed. For non-kind clusters, push the image yourself and set
@@ -185,11 +177,13 @@ upstream for the full IAM user/group/role/policy management surface.
 1. Creates the `extenddb` namespace and a 1Gi PVC for ExtendDB's generated
    config (`extenddb.toml`) and self-signed TLS certificate.
 2. Reads the connection string from the `DocumentDB` resource's
-   `status.connectionString`, resolves the embedded `kubectl get secret`
-   commands, and swaps the ClusterIP for the in-cluster DNS name.
-3. **Strips `directConnection=true`** from the connection string (see
-   [Troubleshooting](#troubleshooting-replicaset-vs-directconnection) below)
-   while keeping `replicaSet=rs0`, which ExtendDB's MongoDB backend requires.
+   `status.connectionString`, reads the referenced credentials directly from
+   the `docdb-credentials` Secret, and swaps the ClusterIP for the in-cluster
+   DNS name.
+3. **Strips `replicaSet=rs0`** while retaining `directConnection=true` (see
+   [Troubleshooting](#replicaset-vs-directconnection) below), then adds
+   `tlsAllowInvalidCertificates=true` for the playground gateway's self-signed
+   certificate.
 4. Stores the resolved URI in an `extenddb-mongo-uri` Secret.
 5. Runs a one-shot `extenddb init --backend mongodb` Job against that URI,
    waits for it to complete, and prints the generated admin credentials from
@@ -200,8 +194,10 @@ upstream for the full IAM user/group/role/policy management surface.
 `scripts/test-connection.sh`:
 
 Port-forwards to the ExtendDB Service and runs
-CreateTable → PutItem → GetItem → DeleteTable through the AWS CLI to confirm
-the round trip through DocumentDB.
+CreateTable → PutItem → GetItem → UpdateItem → DeleteItem →
+TransactWriteItems → TransactGetItems → DeleteTable through the AWS CLI to
+confirm basic CRUD and transactional round trips through DocumentDB. An exit
+trap attempts to delete the test table if an intermediate check fails.
 
 `scripts/cleanup.sh`:
 
@@ -218,8 +214,8 @@ DocumentDB.
 ```bash
 kubectl port-forward svc/extenddb 18443:18443 -n extenddb &
 pip install -r demo/requirements.txt
-EXTENDDB_ACCESS_KEY_ID=<from deploy.sh output> \
-EXTENDDB_SECRET_ACCESS_KEY=<from deploy.sh output> \
+EXTENDDB_ACCESS_KEY_ID=<from create-access-key above> \
+EXTENDDB_SECRET_ACCESS_KEY=<from create-access-key above> \
     ./demo/demo.py
 ```
 
@@ -243,14 +239,15 @@ GitHub Actions run, or build from source (see the
 [project README](https://github.com/awslabs/dynamodb-shell) for
 prerequisites — cmake, a C++ compiler, and the AWS C++ SDK).
 
-Point it at ExtendDB with the same credentials `scripts/deploy.sh` printed,
+Point it at ExtendDB with the SigV4 credentials created in
+[Creating a DynamoDB API access key](#creating-a-dynamodb-api-access-key),
 and override the endpoint via `DDBSH_ENDPOINT_OVERRIDE`:
 
 ```bash
 kubectl port-forward svc/extenddb 18443:18443 -n extenddb &
 
-export AWS_ACCESS_KEY_ID=<from deploy.sh output>
-export AWS_SECRET_ACCESS_KEY=<from deploy.sh output>
+export AWS_ACCESS_KEY_ID=<from create-access-key>
+export AWS_SECRET_ACCESS_KEY=<from create-access-key>
 export AWS_DEFAULT_REGION=us-east-1
 export DDBSH_ENDPOINT_OVERRIDE="https://127.0.0.1:18443"
 
@@ -274,10 +271,20 @@ you're pointed at a non-standard endpoint rather than real AWS DynamoDB.
 
 ### Using a different ExtendDB version
 
-`Dockerfile` accepts build args to pin a specific source ref:
+`scripts/build-image.sh` accepts environment variables for a remote source
+ref without pinning the playground:
 
 ```bash
-docker build --build-arg EXTENDDB_REF=v0.1.3 -t extenddb-mongo:playground .
+EXTENDDB_REF=v0.1.3 ./scripts/build-image.sh
+```
+
+To validate an uncommitted local ExtendDB working tree without loading an
+image into a cluster, build it directly as the named source context:
+
+```bash
+docker build \
+  --build-context extenddb-source=/absolute/path/to/extenddb \
+  -t extenddb-mongo:playground .
 ```
 
 ### Connecting from outside the cluster
@@ -385,7 +392,7 @@ The init Job and serve Deployment share one ReadWriteOnce PVC and are
 applied sequentially by `deploy.sh` to avoid this, but on a multi-node
 cluster the completed init Job's pod can briefly hold the volume attached to
 its node after `Complete`, causing the Deployment's pod to fail scheduling
-on a different node. The Job sets `ttlSecondsAfterFinished: 120` so it's
+on a different node. The Job sets `ttlSecondsAfterFinished: 600` so it's
 cleaned up automatically, but if you hit this, delete the finished Job pod
 manually and let the Deployment retry:
 

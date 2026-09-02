@@ -9,9 +9,28 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLAYGROUND_DIR="$(dirname "$SCRIPT_DIR")"
 IMAGE="${EXTENDDB_IMAGE:-extenddb-mongo:playground}"
 KIND_CLUSTER="${KIND_CLUSTER:-}"
+EXTENDDB_REPO="${EXTENDDB_REPO:-https://github.com/ExtendDB/extenddb.git}"
+EXTENDDB_REF="${EXTENDDB_REF:-main}"
+EXTENDDB_SOURCE_DIR="${EXTENDDB_SOURCE_DIR:-}"
+
+if [ -n "$EXTENDDB_SOURCE_DIR" ]; then
+    EXTENDDB_SOURCE_DIR="$(cd "$EXTENDDB_SOURCE_DIR" && pwd)"
+    if [ ! -f "$EXTENDDB_SOURCE_DIR/Cargo.toml" ]; then
+        echo "EXTENDDB_SOURCE_DIR must point to an ExtendDB working tree" >&2
+        exit 1
+    fi
+    SOURCE_CONTEXT="$EXTENDDB_SOURCE_DIR"
+    echo "Using local ExtendDB source: $SOURCE_CONTEXT"
+else
+    SOURCE_CONTEXT="${EXTENDDB_REPO}#${EXTENDDB_REF}"
+    echo "Using ExtendDB source: $SOURCE_CONTEXT"
+fi
 
 echo "=== Building ${IMAGE} ==="
-docker build -t "${IMAGE}" "${PLAYGROUND_DIR}"
+docker build \
+    --build-context "extenddb-source=${SOURCE_CONTEXT}" \
+    -t "${IMAGE}" \
+    "${PLAYGROUND_DIR}"
 
 if command -v kind >/dev/null 2>&1; then
     # Auto-detect the current kind cluster from the active kube context unless

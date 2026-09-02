@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # Builds the ExtendDB server binary with the MongoDB storage backend
 # compiled in. ExtendDB does not (as of this writing) publish an official
 # container image with the MongoDB backend enabled -- only a PostgreSQL
@@ -7,25 +9,21 @@
 # image here with `--no-default-features --features mongodb`.
 #
 # Build (from this directory):
-#   docker build -t extenddb-mongo:playground .
+#   docker build \
+#     --build-context extenddb-source=https://github.com/ExtendDB/extenddb.git#main \
+#     -t extenddb-mongo:playground .
 #
-# Override the source ref/repo if you want a different version:
-#   docker build --build-arg EXTENDDB_REF=v0.1.3 -t extenddb-mongo:playground .
-
-ARG EXTENDDB_REPO=https://github.com/ExtendDB/extenddb.git
-ARG EXTENDDB_REF=main
+# To validate a local ExtendDB working tree, replace the Git URL above with
+# its absolute path. The named context keeps the playground unpinned.
 
 FROM rust:1.88-slim-bookworm AS build
-ARG EXTENDDB_REPO
-ARG EXTENDDB_REF
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git ca-certificates pkg-config libssl-dev \
+        ca-certificates pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-RUN git clone --depth 1 --branch "${EXTENDDB_REF}" "${EXTENDDB_REPO}" . \
-    || (git clone "${EXTENDDB_REPO}" . && git checkout "${EXTENDDB_REF}")
+COPY --from=extenddb-source . .
 
 # MongoDB backend build: the postgres/mongodb/sqlite features are mutually
 # exclusive, so the default postgres feature must be disabled explicitly.

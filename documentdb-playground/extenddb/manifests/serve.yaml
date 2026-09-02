@@ -46,6 +46,9 @@ spec:
                 secretKeyRef:
                   name: extenddb-mongo-uri
                   key: connection_string
+            # DocumentDB does not support snapshot read concern in transactions.
+            - name: EXTENDDB__STORAGE__MONGODB__TRANSACTION_READ_CONCERN
+              value: majority
             # Must match the init Job's HOME so `~/.extenddb/tls/cert.pem`
             # (referenced by the generated extenddb.toml's cert_path/key_path)
             # resolves to the same PVC-backed location the cert was written

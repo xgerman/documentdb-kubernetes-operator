@@ -33,8 +33,13 @@ spec:
   nodeCount: 1
   instancesPerNode: 1
   image:
-    documentDB: ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb:0.110.0
-    gateway: ghcr.io/documentdb/documentdb-kubernetes-operator/gateway:0.110.0
+    # Local extension image built from documentdb/documentdb v0.116-0 (includes
+    # the PG 18.6 second-insert segfault fix, merged 2026-08-19; not yet
+    # published under an operator image tag as of this writing -- built
+    # locally per docs/developer-guides). Not a stable playground reference;
+    # bump to an official ghcr.io tag once one incorporates the fix.
+    documentDB: documentdb-ext:0.116.0-src
+    gateway: ghcr.io/documentdb/documentdb-kubernetes-operator/gateway:0.114.0
   documentDbCredentialSecret: docdb-credentials
   resource:
     storage:

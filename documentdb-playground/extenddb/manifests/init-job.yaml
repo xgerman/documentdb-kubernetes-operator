@@ -31,7 +31,7 @@ spec:
   # Give the job pod a bounded lifetime after completion so it releases the
   # ReadWriteOnce PVC promptly, avoiding a lingering-pod race with the serve
   # Deployment on multi-node clusters (see README Troubleshooting).
-  ttlSecondsAfterFinished: 120
+  ttlSecondsAfterFinished: 600
   template:
     spec:
       restartPolicy: Never
@@ -51,10 +51,10 @@ spec:
           # run init with --overwrite so it replaces the seed file with its
           # fully generated config once bootstrapping succeeds.
           command:
-            - bash
+            - sh
             - -c
             - |
-              set -euo pipefail
+              set -eu
               umask 077
               cat > /var/lib/extenddb/extenddb.toml <<TOML
               [server]
